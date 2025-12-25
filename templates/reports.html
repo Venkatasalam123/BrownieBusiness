@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+
+{% block title %}Sales Reports - Brownie Sales Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-chart-line me-2"></i>Monthly Sales Report
+                </h2>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">
+                        <i class="fas fa-chart-bar me-2"></i>Report Type <span class="text-danger">*</span>
+                    </label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="report_type" id="report_type_monthly" value="monthly" checked>
+                        <label class="btn btn-outline-primary" for="report_type_monthly">
+                            <i class="fas fa-calendar-alt me-2"></i>Monthly
+                        </label>
+                        <input type="radio" class="btn-check" name="report_type" id="report_type_overall" value="overall">
+                        <label class="btn btn-outline-primary" for="report_type_overall">
+                            <i class="fas fa-chart-line me-2"></i>Overall
+                        </label>
+                    </div>
+                </div>
+                <div id="monthlyFilters">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="report_year" class="form-label">
+                                <i class="fas fa-calendar me-2"></i>Year
+                            </label>
+                            <select class="form-select form-select-lg" id="report_year">
+                                {% for year in available_years %}
+                                <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>{{ year }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="report_month" class="form-label">
+                                <i class="fas fa-calendar-alt me-2"></i>Month
+                            </label>
+                            <select class="form-select form-select-lg" id="report_month">
+                                {% for month_num in range(1, 13) %}
+                                <option value="{{ month_num }}" {% if month_num == current_month %}selected{% endif %}>
+                                    {{ ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][month_num - 1] }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-primary btn-lg w-100" id="loadReport">
+                    <i class="fas fa-sync-alt me-2"></i>Load Report
+                </button>
+            </div>
+        </div>
+
+        <div id="reportContent" style="display: none;">
+            <!-- Summary Statistics -->
+            <div class="row mb-4">
+                <div class="col-md-3 mb-3">
+                    <div class="stat-card" style="background: var(--primary-gradient);">
+                        <h5><i class="fas fa-rupee-sign me-2"></i>Total Sales</h5>
+                        <h3 id="totalSales">₹0.00</h3>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="stat-card" style="background: var(--success-gradient);">
+                        <h5><i class="fas fa-chart-line me-2"></i>Margin (30%)</h5>
+                        <h3 id="margin">₹0.00</h3>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="stat-card" style="background: var(--danger-gradient);">
+                        <h5><i class="fas fa-exclamation-triangle me-2"></i>Pending Amount</h5>
+                        <h3 id="totalPending">₹0.00</h3>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="stat-card" style="background: var(--info-gradient);">
+                        <h5><i class="fas fa-shopping-cart me-2"></i>Total Orders</h5>
+                        <h3 id="totalOrders">0</h3>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="row mb-4">
+                <div class="col-md-6 mb-3">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-store me-2"></i>Sales by Shop/Customer
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="shopChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-layer-group me-2"></i>Sales by Variety
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="varietyChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Shop-wise Breakdown Table -->
+            <div class="card mb-4">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list me-2"></i>Shop/Customer Breakdown
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped" id="shopTable">
+                            <thead>
+                                <tr>
+                                    <th><i class="fas fa-store me-2"></i>Shop/Customer</th>
+                                    <th><i class="fas fa-rupee-sign me-2"></i>Total Sales</th>
+                                    <th><i class="fas fa-exclamation-triangle me-2"></i>Pending</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Variety-wise Breakdown Table -->
+            <div class="card">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list me-2"></i>Variety Breakdown
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped" id="varietyTable">
+                            <thead>
+                                <tr>
+                                    <th><i class="fas fa-layer-group me-2"></i>Variety</th>
+                                    <th><i class="fas fa-rupee-sign me-2"></i>Total Sales</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script>
+    let shopChart = null;
+    let varietyChart = null;
+
+    // Toggle monthly filters visibility
+    document.querySelectorAll('input[name="report_type"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const monthlyFilters = document.getElementById('monthlyFilters');
+            if (this.value === 'monthly') {
+                monthlyFilters.style.display = 'block';
+            } else {
+                monthlyFilters.style.display = 'none';
+            }
+        });
+    });
+
+    document.getElementById('loadReport').addEventListener('click', function() {
+        const reportType = document.querySelector('input[name="report_type"]:checked').value;
+        let apiUrl;
+        
+        if (reportType === 'overall') {
+            apiUrl = '/api/reports/overall';
+        } else {
+            const year = document.getElementById('report_year').value;
+            const month = document.getElementById('report_month').value;
+            apiUrl = `/api/reports/monthly/${year}/${month}`;
+        }
+        
+        fetch(apiUrl)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error loading report: ' + data.error);
+                    return;
+                }
+
+                // Show report content
+                document.getElementById('reportContent').style.display = 'block';
+
+                // Update summary statistics
+                document.getElementById('totalSales').textContent = '₹' + data.total_sales.toFixed(2);
+                document.getElementById('margin').textContent = '₹' + data.margin.toFixed(2);
+                document.getElementById('totalPending').textContent = '₹' + data.total_pending.toFixed(2);
+                document.getElementById('totalOrders').textContent = data.total_orders;
+
+                // Update shop chart
+                if (shopChart) {
+                    shopChart.destroy();
+                }
+                shopChart = createPieChart('shopChart', data.shop_data.labels, data.shop_data.values, 'Sales by Shop/Customer');
+
+                // Update variety chart
+                if (varietyChart) {
+                    varietyChart.destroy();
+                }
+                varietyChart = createPieChart('varietyChart', data.variety_data.labels, data.variety_data.values, 'Sales by Variety');
+
+                // Update shop table
+                const shopTableBody = document.querySelector('#shopTable tbody');
+                shopTableBody.innerHTML = '';
+                data.shop_data.labels.forEach((label, index) => {
+                    const row = document.createElement('tr');
+                    const pending = data.shop_data.pending[index] || 0;
+                    row.innerHTML = `
+                        <td>${label}</td>
+                        <td>₹${data.shop_data.values[index].toFixed(2)}</td>
+                        <td class="${pending > 0 ? 'text-danger' : 'text-success'}">₹${pending.toFixed(2)}</td>
+                    `;
+                    shopTableBody.appendChild(row);
+                });
+
+                // Update variety table
+                const varietyTableBody = document.querySelector('#varietyTable tbody');
+                varietyTableBody.innerHTML = '';
+                data.variety_data.labels.forEach((label, index) => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${label}</td>
+                        <td>₹${data.variety_data.values[index].toFixed(2)}</td>
+                    `;
+                    varietyTableBody.appendChild(row);
+                });
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error loading report. Please try again.');
+            });
+    });
+
+    // Load report on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('loadReport').click();
+    });
+</script>
+{% endblock %}
+

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Varieties - Brownie Sales Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-plus-circle me-2"></i>Add New Variety
+                </h2>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('add_variety') }}">
+                    <div class="row">
+                        <div class="col-md-5 mb-3">
+                            <label for="name" class="form-label">
+                                <i class="fas fa-tag me-2"></i>Variety Name <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control form-control-lg" id="name" name="name" required>
+                        </div>
+                        <div class="col-md-5 mb-3">
+                            <label for="default_price" class="form-label">
+                                <i class="fas fa-rupee-sign me-2"></i>Default Price (₹) <span class="text-danger">*</span>
+                            </label>
+                            <input type="number" class="form-control form-control-lg" id="default_price" name="default_price" step="0.01" min="0.01" required>
+                        </div>
+                        <div class="col-md-2 mb-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary btn-lg w-100">
+                                <i class="fas fa-plus me-1"></i>Add
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-layer-group me-2"></i>Existing Varieties
+                </h2>
+            </div>
+            <div class="card-body">
+                {% if varieties %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th><i class="fas fa-tag me-2"></i>Name</th>
+                                <th><i class="fas fa-rupee-sign me-2"></i>Default Price</th>
+                                <th><i class="fas fa-cogs me-2"></i>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for variety in varieties %}
+                            <tr>
+                                <td>
+                                    <input type="text" class="form-control" name="name" value="{{ variety.name }}" form="form-update-{{ variety.id }}" required>
+                                </td>
+                                <td>
+                                    <input type="number" class="form-control" name="default_price" value="{{ variety.default_price }}" step="0.01" min="0.01" form="form-update-{{ variety.id }}" required>
+                                </td>
+                                <td>
+                                    <form method="POST" action="{{ url_for('update_variety', id=variety.id) }}" id="form-update-{{ variety.id }}" style="display:inline;">
+                                        <button type="submit" class="btn btn-sm btn-primary me-2">
+                                            <i class="fas fa-edit me-1"></i>Update
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('delete_variety', id=variety.id) }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this variety?');">
+                                        <button type="submit" class="btn btn-sm btn-danger">
+                                            <i class="fas fa-trash me-1"></i>Delete
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-layer-group fa-3x text-muted mb-3"></i>
+                    <p class="text-muted">No varieties added yet. Add your first variety above!</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

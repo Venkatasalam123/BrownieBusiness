@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Shops - Brownie Sales Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-plus-circle me-2"></i>Add New Shop/Customer
+                </h2>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('add_shop') }}">
+                    <div class="row">
+                        <div class="col-md-10 mb-3">
+                            <label for="name" class="form-label">
+                                <i class="fas fa-store me-2"></i>Shop/Customer Name <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control form-control-lg" id="name" name="name" required>
+                        </div>
+                        <div class="col-md-2 mb-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary btn-lg w-100">
+                                <i class="fas fa-plus me-1"></i>Add
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-store me-2"></i>Existing Shops/Customers
+                </h2>
+            </div>
+            <div class="card-body">
+                {% if shops_with_pending %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th><i class="fas fa-store me-2"></i>Name</th>
+                                <th><i class="fas fa-exclamation-triangle me-2"></i>Pending</th>
+                                <th><i class="fas fa-cogs me-2"></i>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in shops_with_pending %}
+                            <tr>
+                                <td>
+                                    <form method="POST" action="{{ url_for('update_shop', id=item.shop.id) }}" class="d-inline w-100">
+                                        <div class="d-flex">
+                                            <input type="text" class="form-control me-2" name="name" value="{{ item.shop.name }}" required>
+                                            <button type="submit" class="btn btn-sm btn-primary">
+                                                <i class="fas fa-edit me-1"></i>Update
+                                            </button>
+                                        </div>
+                                    </form>
+                                </td>
+                                <td>
+                                    {% if item.pending > 0 %}
+                                        <span class="badge bg-danger">₹{{ "%.2f"|format(item.pending) }}</span>
+                                        <small class="text-muted">({{ item.unpaid_count }} order{{ 's' if item.unpaid_count != 1 else '' }})</small>
+                                    {% else %}
+                                        <span class="badge bg-success">₹0.00</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if item.pending > 0 %}
+                                    <a href="{{ url_for('shop_bill', id=item.shop.id) }}" class="btn btn-sm btn-primary me-2" target="_blank">
+                                        <i class="fas fa-file-invoice me-1"></i>Generate Bill
+                                    </a>
+                                    {% else %}
+                                    <span class="text-muted">No pending</span>
+                                    {% endif %}
+                                    <form method="POST" action="{{ url_for('delete_shop', id=item.shop.id) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this shop/customer?');">
+                                        <button type="submit" class="btn btn-sm btn-danger">
+                                            <i class="fas fa-trash me-1"></i>Delete
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-store fa-3x text-muted mb-3"></i>
+                    <p class="text-muted">No shops/customers added yet. Add your first shop/customer above!</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

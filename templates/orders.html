@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}Order History - Brownie Sales Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-history me-2"></i>Order History
+                </h2>
+            </div>
+            <div class="card-body">
+                {% if months_grouped %}
+                    {% for month_key, month_label, dates_list, month_total, month_pending, month_order_count in months_grouped %}
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom">
+                            <h4 class="mb-0">
+                                <i class="fas fa-calendar-alt me-2"></i>{{ month_label }}
+                                <span class="badge bg-secondary ms-2">{{ month_order_count }} order{{ 's' if month_order_count != 1 else '' }}</span>
+                            </h4>
+                            <div>
+                                <strong class="text-primary">Month Total: ₹{{ "%.2f"|format(month_total) }}</strong>
+                                <strong class="{% if month_pending > 0 %}text-danger{% else %}text-success{% endif %} ms-2">Pending: ₹{{ "%.2f"|format(month_pending) }}</strong>
+                                <button class="btn btn-sm btn-outline-primary ms-2" type="button" data-bs-toggle="collapse" data-bs-target="#month-{{ month_key }}" aria-expanded="false">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="collapse" id="month-{{ month_key }}">
+                            {% for date_str, orders, date_total, date_pending in dates_list %}
+                            <div class="mb-3 ms-3">
+                                <h5 class="mb-2">
+                                    <i class="fas fa-calendar-day me-2"></i>
+                                    {{ orders[0].delivery_date.strftime('%B %d, %Y') }}
+                                    <span class="badge bg-info ms-2">{{ orders|length }} order{{ 's' if orders|length != 1 else '' }}</span>
+                                    <span class="text-muted ms-2">(₹{{ "%.2f"|format(date_total) }})</span>
+                                    <span class="badge {% if date_pending > 0 %}bg-danger{% else %}bg-success{% endif %} ms-2">Pending: ₹{{ "%.2f"|format(date_pending) }}</span>
+                                </h5>
+                                
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th><i class="fas fa-store me-2"></i>Shop/Customer</th>
+                                                <th><i class="fas fa-layer-group me-2"></i>Variety</th>
+                                                <th><i class="fas fa-hashtag me-2"></i>Qty</th>
+                                                <th><i class="fas fa-rupee-sign me-2"></i>Price/Unit</th>
+                                                <th><i class="fas fa-calculator me-2"></i>Total</th>
+                                                <th><i class="fas fa-money-bill-wave me-2"></i>Payment</th>
+                                                <th><i class="fas fa-exclamation-triangle me-2"></i>Pending</th>
+                                                <th><i class="fas fa-clock me-2"></i>Added</th>
+                                                <th><i class="fas fa-cogs me-2"></i>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for order in orders %}
+                                            {% set order_total = order.price * order.quantity %}
+                                            {% set payment_status = order.payment_status if order.payment_status else 'unpaid' %}
+                                            {% set paid_amt = order.paid_amount if order.paid_amount else 0 %}
+                                            {% set pending_amt = order_total - paid_amt %}
+                                            <tr>
+                                                <td><strong>{{ order.shop.name }}</strong></td>
+                                                <td>{{ order.variety.name }}</td>
+                                                <td>{{ order.quantity }}</td>
+                                                <td>₹{{ "%.2f"|format(order.price) }}</td>
+                                                <td><strong>₹{{ "%.2f"|format(order_total) }}</strong></td>
+                                                <td>
+                                                    {% if payment_status == 'paid' %}
+                                                        <span class="badge bg-success">Paid</span>
+                                                    {% elif payment_status == 'partial' %}
+                                                        <span class="badge bg-warning">Partial</span>
+                                                        <br><small>Paid: ₹{{ "%.2f"|format(paid_amt) }}</small>
+                                                    {% else %}
+                                                        <span class="badge bg-danger">Unpaid</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    {% if pending_amt > 0 %}
+                                                        <strong class="text-danger">₹{{ "%.2f"|format(pending_amt) }}</strong>
+                                                    {% else %}
+                                                        <span class="text-success">₹0.00</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td>
+                                                    <small class="text-muted">
+                                                        {% if order.created_at %}
+                                                            {% set ist_time = order.created_at + ist_offset %}
+                                                            {{ ist_time.strftime('%I:%M %p IST') }}
+                                                        {% else %}
+                                                            -
+                                                        {% endif %}
+                                                    </small>
+                                                </td>
+                                                <td>
+                                                    <a href="{{ url_for('edit_order', id=order.id) }}" class="btn btn-sm btn-primary" title="Edit Order">
+                                                        <i class="fas fa-edit"></i>
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                            <tr class="table-info">
+                                                <td colspan="7" class="text-end"><strong>Date Total:</strong></td>
+                                                <td><strong>₹{{ "%.2f"|format(date_total) }}</strong></td>
+                                                <td></td>
+                                            </tr>
+                                            <tr class="table-warning">
+                                                <td colspan="7" class="text-end"><strong>Date Pending:</strong></td>
+                                                <td><strong class="{% if date_pending > 0 %}text-danger{% else %}text-success{% endif %}">₹{{ "%.2f"|format(date_pending) }}</strong></td>
+                                                <td></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                    
+                    <!-- Overall Summary -->
+                    <div class="card bg-light mt-4">
+                        <div class="card-body">
+                            <div class="row text-center">
+                                <div class="col-md-4">
+                                    <div class="p-3 bg-light rounded">
+                                        <h5 class="text-muted mb-2">Total Orders</h5>
+                                        <h2 class="mb-0 fw-bold">{{ total_orders }}</h2>
+                                        <hr class="my-2">
+                                        <small class="text-muted d-block mb-1">Pending Amount</small>
+                                        <h4 class="mb-0 text-danger fw-bold">₹{{ "%.2f"|format(total_pending) }}</h4>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="p-3 bg-light rounded">
+                                        <h5 class="text-muted mb-2">Total Months</h5>
+                                        <h2 class="mb-0 fw-bold">{{ months_grouped|length }}</h2>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="p-3 bg-light rounded">
+                                        <h5 class="text-muted mb-2">Total Sales</h5>
+                                        <h2 class="mb-0 fw-bold">₹{{ "%.2f"|format(total_sales) }}</h2>
+                                    </div>
+                                </div>
+                            </div>
+                            {% if total_orders > 0 %}
+                            <div class="row mt-4">
+                                <div class="col-12 text-center">
+                                    <form method="POST" action="{{ url_for('delete_all_orders') }}" id="deleteAllForm">
+                                        <button type="button" class="btn btn-danger btn-lg" id="deleteAllBtn">
+                                            <i class="fas fa-trash-alt me-2"></i>Delete All Orders
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% else %}
+                    <div class="text-center py-5">
+                        <i class="fas fa-shopping-cart fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">No orders found. Start by adding your first order!</p>
+                        <a href="{{ url_for('index') }}" class="btn btn-primary btn-lg mt-3">
+                            <i class="fas fa-plus-circle me-2"></i>Add Order
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Auto-expand first month on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const firstMonth = document.querySelector('[data-bs-toggle="collapse"]');
+        if (firstMonth) {
+            const targetId = firstMonth.getAttribute('data-bs-target');
+            const targetElement = document.querySelector(targetId);
+            if (targetElement) {
+                const collapse = new bootstrap.Collapse(targetElement, {toggle: true});
+                firstMonth.setAttribute('aria-expanded', 'true');
+                firstMonth.querySelector('i').classList.remove('fa-chevron-down');
+                firstMonth.querySelector('i').classList.add('fa-chevron-up');
+            }
+        }
+        
+        // Toggle chevron icon when collapse is toggled
+        document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(button => {
+            button.addEventListener('click', function() {
+                const icon = this.querySelector('i');
+                setTimeout(() => {
+                    const isExpanded = this.getAttribute('aria-expanded') === 'true';
+                    if (isExpanded) {
+                        icon.classList.remove('fa-chevron-down');
+                        icon.classList.add('fa-chevron-up');
+                    } else {
+                        icon.classList.remove('fa-chevron-up');
+                        icon.classList.add('fa-chevron-down');
+                    }
+                }, 100);
+            });
+        });
+    });
+    
+    // Double confirmation for delete all orders
+    document.addEventListener('DOMContentLoaded', function() {
+        const deleteBtn = document.getElementById('deleteAllBtn');
+        const deleteForm = document.getElementById('deleteAllForm');
+        let firstConfirm = false;
+        
+        if (deleteBtn && deleteForm) {
+            deleteBtn.addEventListener('click', function() {
+                if (!firstConfirm) {
+                    // First confirmation
+                    if (confirm('⚠️ WARNING: This will delete ALL orders!\n\nAre you sure you want to continue?')) {
+                        firstConfirm = true;
+                        deleteBtn.innerHTML = '<i class="fas fa-exclamation-triangle me-2"></i>Click Again to Confirm Delete';
+                        deleteBtn.classList.remove('btn-danger');
+                        deleteBtn.classList.add('btn-warning');
+                        
+                        // Reset after 5 seconds
+                        setTimeout(function() {
+                            firstConfirm = false;
+                            deleteBtn.innerHTML = '<i class="fas fa-trash-alt me-2"></i>Delete All Orders';
+                            deleteBtn.classList.remove('btn-primary');
+                            deleteBtn.classList.add('btn-danger');
+                        }, 5000);
+                    }
+                } else {
+                    // Second confirmation
+                    if (confirm('⚠️ FINAL WARNING!\n\nThis will PERMANENTLY delete ALL {{ total_orders }} orders. This action CANNOT be undone!\n\nType OK to confirm or Cancel to abort.')) {
+                        deleteForm.submit();
+                    } else {
+                        // Reset on cancel
+                        firstConfirm = false;
+                        deleteBtn.innerHTML = '<i class="fas fa-trash-alt me-2"></i>Delete All Orders';
+                        deleteBtn.classList.remove('btn-warning');
+                        deleteBtn.classList.add('btn-danger');
+                    }
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}

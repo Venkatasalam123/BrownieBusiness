@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Order - Brownie Sales Tracker{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-md-10 col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-edit me-2"></i>Edit Order
+                </h2>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('edit_order', id=order.id) }}">
+                    <div class="row">
+                        <div class="col-md-6 mb-4">
+                            <label for="shop_id" class="form-label">
+                                <i class="fas fa-store me-2"></i>Shop/Customer <span class="text-danger">*</span>
+                            </label>
+                            <select class="form-select form-select-lg" id="shop_id" name="shop_id" required>
+                                {% for shop in shops %}
+                                <option value="{{ shop.id }}" {% if shop.id == order.shop_id %}selected{% endif %}>{{ shop.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <label for="variety_id" class="form-label">
+                                <i class="fas fa-layer-group me-2"></i>Variety <span class="text-danger">*</span>
+                            </label>
+                            <select class="form-select form-select-lg" id="variety_id" name="variety_id" required>
+                                {% for variety in varieties %}
+                                <option value="{{ variety.id }}" {% if variety.id == order.variety_id %}selected{% endif %}>{{ variety.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-4">
+                            <label for="quantity" class="form-label">
+                                <i class="fas fa-hashtag me-2"></i>Quantity <span class="text-danger">*</span>
+                            </label>
+                            <input type="number" class="form-control form-control-lg" id="quantity" name="quantity" min="1" value="{{ order.quantity }}" required>
+                        </div>
+                        <div class="col-md-4 mb-4">
+                            <label for="price" class="form-label">
+                                <i class="fas fa-rupee-sign me-2"></i>Price per Unit (₹) <span class="text-danger">*</span>
+                            </label>
+                            <input type="number" class="form-control form-control-lg" id="price" name="price" step="0.01" min="0" value="{{ order.price }}" required>
+                        </div>
+                        <div class="col-md-4 mb-4">
+                            <label for="delivery_date" class="form-label">
+                                <i class="fas fa-calendar me-2"></i>Delivery Date <span class="text-danger">*</span>
+                            </label>
+                            <input type="date" class="form-control form-control-lg" id="delivery_date" name="delivery_date" value="{{ order.delivery_date.isoformat() }}" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-4">
+                            <label for="payment_status" class="form-label">
+                                <i class="fas fa-money-bill-wave me-2"></i>Payment Status <span class="text-danger">*</span>
+                            </label>
+                            <select class="form-select form-select-lg" id="payment_status" name="payment_status" required>
+                                <option value="unpaid" {% if order.payment_status == 'unpaid' %}selected{% endif %}>Not Paid</option>
+                                <option value="partial" {% if order.payment_status == 'partial' %}selected{% endif %}>Partially Paid</option>
+                                <option value="paid" {% if order.payment_status == 'paid' %}selected{% endif %}>Paid</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <label for="paid_amount" class="form-label">
+                                <i class="fas fa-rupee-sign me-2"></i>Paid Amount (₹)
+                            </label>
+                            <input type="number" class="form-control form-control-lg" id="paid_amount" name="paid_amount" step="0.01" min="0" value="{{ order.paid_amount if order.paid_amount else 0 }}" {% if order.payment_status == 'paid' %}disabled{% endif %}>
+                            <small class="form-text">Enter amount paid for partial payment</small>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 mb-3">
+                            <div class="alert alert-info">
+                                <strong>Total Amount:</strong> <span id="total_display">₹{{ "%.2f"|format(order.price * order.quantity) }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('orders') }}" class="btn btn-secondary btn-lg">
+                            <i class="fas fa-arrow-left me-2"></i>Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="fas fa-save me-2"></i>Update Order
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const paymentStatusSelect = document.getElementById('payment_status');
+        const paidAmountInput = document.getElementById('paid_amount');
+        const priceInput = document.getElementById('price');
+        const quantityInput = document.getElementById('quantity');
+
+        function updatePaidAmountState() {
+            const totalAmount = parseFloat(priceInput.value || 0) * parseFloat(quantityInput.value || 0);
+            if (paymentStatusSelect.value === 'paid') {
+                paidAmountInput.value = totalAmount.toFixed(2);
+                paidAmountInput.disabled = true;
+            } else if (paymentStatusSelect.value === 'partial') {
+                paidAmountInput.disabled = false;
+                if (parseFloat(paidAmountInput.value) === totalAmount) {
+                    paidAmountInput.value = '0.00';
+                }
+            } else { // unpaid
+                paidAmountInput.value = '0.00';
+                paidAmountInput.disabled = true;
+            }
+        }
+
+        function updateTotal() {
+            const totalAmount = parseFloat(priceInput.value || 0) * parseFloat(quantityInput.value || 0);
+            document.getElementById('total_display').textContent = '₹' + totalAmount.toFixed(2);
+        }
+
+        paymentStatusSelect.addEventListener('change', updatePaidAmountState);
+        priceInput.addEventListener('input', function() {
+            updateTotal();
+            updatePaidAmountState();
+        });
+        quantityInput.addEventListener('input', function() {
+            updateTotal();
+            updatePaidAmountState();
+        });
+
+        // Initial state setup
+        updatePaidAmountState();
+        updateTotal();
+    });
+</script>
+{% endblock %}
+

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bill - {{ shop.name }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+        }
+        body {
+            font-family: 'Arial', sans-serif;
+            font-size: 12px;
+            color: #333;
+        }
+        .bill-header {
+            text-align: center;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 1rem;
+            margin-bottom: 2rem;
+        }
+        .bill-header h1 {
+            margin: 0;
+            font-size: 28px;
+            color: #667eea;
+        }
+        .bill-header p {
+            margin: 0.5rem 0 0 0;
+            color: #666;
+        }
+        .bill-info {
+            margin-bottom: 2rem;
+        }
+        .bill-info h5 {
+            margin: 0.5rem 0;
+            color: #666;
+            font-size: 11px;
+        }
+        .bill-info h4 {
+            margin: 0;
+            font-size: 14px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 2rem;
+        }
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            font-size: 11px;
+        }
+        td {
+            font-size: 11px;
+        }
+        .text-end {
+            text-align: right;
+        }
+        .bill-total {
+            background: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 5px;
+            margin-top: 2rem;
+            text-align: center;
+        }
+        .bill-total h3 {
+            margin: 0.5rem 0;
+            font-size: 14px;
+            color: #666;
+        }
+        .bill-total h1 {
+            margin: 0;
+            font-size: 32px;
+            color: #dc3545;
+        }
+        .footer-text {
+            text-align: center;
+            margin-top: 2rem;
+            color: #666;
+            font-size: 10px;
+        }
+        tfoot tr {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        .text-danger {
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <!-- Bill Header -->
+    <div class="bill-header">
+        <h1>INVOICE</h1>
+        <p>Brownie Sales</p>
+    </div>
+
+    <div class="bill-info">
+        <div style="display: flex; justify-content: space-between;">
+            <div>
+                <h5>Bill To:</h5>
+                <h4>{{ shop.name }}</h4>
+            </div>
+            <div style="text-align: right;">
+                <h5>Bill Date:</h5>
+                <h4>{{ bill_date.strftime('%B %d, %Y') }}</h4>
+            </div>
+        </div>
+    </div>
+
+    {% if unpaid_orders %}
+    <!-- Unpaid Orders Table -->
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Variety</th>
+                <th class="text-end">Quantity</th>
+                <th class="text-end">Price/Unit</th>
+                <th class="text-end">Total</th>
+                <th class="text-end">Paid</th>
+                <th class="text-end">Pending</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in unpaid_orders %}
+            <tr>
+                <td>{{ item.order.delivery_date.strftime('%d-%m-%Y') }}</td>
+                <td>{{ item.order.variety.name }}</td>
+                <td class="text-end">{{ item.order.quantity }}</td>
+                <td class="text-end">₹{{ "%.2f"|format(item.order.price) }}</td>
+                <td class="text-end">₹{{ "%.2f"|format(item.total) }}</td>
+                <td class="text-end">₹{{ "%.2f"|format(item.paid) }}</td>
+                <td class="text-end text-danger"><strong>₹{{ "%.2f"|format(item.pending) }}</strong></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="6" class="text-end"><strong>Total Pending Amount:</strong></td>
+                <td class="text-end text-danger"><strong style="font-size: 14px;">₹{{ "%.2f"|format(total_pending) }}</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+
+    <div class="bill-total">
+        <h3>Amount Due</h3>
+        <h1>₹{{ "%.2f"|format(total_pending) }}</h1>
+    </div>
+
+    <div class="footer-text">
+        <p>Thank you for your business!</p>
+        <p>Please make payment at your earliest convenience.</p>
+    </div>
+
+    {% else %}
+    <div style="text-align: center; padding: 3rem;">
+        <h3>No Pending Payments</h3>
+        <p>All orders for {{ shop.name }} have been paid.</p>
+    </div>
+    {% endif %}
+</body>
+</html>
+
