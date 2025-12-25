@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import pandas as pd
 from flask import Flask
 from config import USE_GOOGLE_SHEETS
@@ -571,42 +570,6 @@ if __name__ == '__main__':
         import traceback
         traceback.print_exc()
         sys.exit(1)
-=======
-import pandas as pd
-from flask import Flask
-from config import USE_GOOGLE_SHEETS
-from decimal import Decimal
-from datetime import datetime, date
-import os
-import sys
-import time
-
-# Import appropriate models based on configuration
-if USE_GOOGLE_SHEETS:
-    from gs_models import db, Variety, Shop, Order, session as db_session
-    from google_sheets import get_gs_db
-    print("📊 Using Google Sheets for import")
-else:
-    from models import db, Variety, Shop, Order
-    db_session = None
-    print("💾 Using SQLite for import")
-
-# Initialize Flask app with same config as main app
-app = Flask(__name__)
-
-if USE_GOOGLE_SHEETS:
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    db.init_app(app)
-    with app.app_context():
-        db.create_all()
-else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///brownie_sales.db'
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    db.init_app(app)
-    with app.app_context():
-        db.create_all()
-
-def import_from_excel(excel_file_path):
     """Import data from Excel file into database"""
     
     with app.app_context():
@@ -1144,4 +1107,3 @@ if __name__ == '__main__':
         import traceback
         traceback.print_exc()
         sys.exit(1)
->>>>>>> 966fed7 (initial push)
