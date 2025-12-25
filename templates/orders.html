@@ -87,8 +87,13 @@
                                                 <td>
                                                     <small class="text-muted">
                                                         {% if order.created_at %}
-                                                            {% set ist_time = order.created_at + ist_offset %}
-                                                            {{ ist_time.strftime('%I:%M %p IST') }}
+                                                            {% if order.created_at.tzinfo %}
+                                                                {# Timezone-aware datetime - already in IST, use as is #}
+                                                                {{ order.created_at.strftime('%I:%M %p IST') }}
+                                                            {% else %}
+                                                                {# Naive datetime - assume it's already in IST, display directly #}
+                                                                {{ order.created_at.strftime('%I:%M %p IST') }}
+                                                            {% endif %}
                                                         {% else %}
                                                             -
                                                         {% endif %}

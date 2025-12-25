@@ -7,10 +7,17 @@ from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from decimal import Decimal
 import json
 import time
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_ist_now():
+    """Get current datetime in IST timezone"""
+    return datetime.now(IST)
 
 # Google Sheets API configuration
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -433,7 +440,7 @@ class GoogleSheetsDB:
                         'delivery_date': datetime.strptime(row[4], '%Y-%m-%d').date() if row[4] else None,
                         'payment_status': row[5] if len(row) > 5 else 'unpaid',
                         'paid_amount': Decimal(str(row[6])) if len(row) > 6 and row[6] else Decimal('0'),
-                        'created_at': datetime.strptime(row[7], '%Y-%m-%d %H:%M:%S') if len(row) > 7 and row[7] else datetime.now()
+                        'created_at': (datetime.strptime(row[7], '%Y-%m-%d %H:%M:%S').replace(tzinfo=IST) if len(row) > 7 and row[7] else get_ist_now())
                     })
                 except (ValueError, IndexError) as e:
                     print(f"Error parsing order row {i}: {e}")
@@ -450,7 +457,7 @@ class GoogleSheetsDB:
             delivery_date.strftime('%Y-%m-%d') if isinstance(delivery_date, date) else str(delivery_date),
             payment_status,
             str(paid_amount),
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            get_ist_now().strftime('%Y-%m-%d %H:%M:%S')
         ]]
         self._append_sheet(SHEET_ORDERS, values)
     
@@ -464,7 +471,7 @@ class GoogleSheetsDB:
             delivery_date.strftime('%Y-%m-%d') if isinstance(delivery_date, date) else str(delivery_date),
             payment_status,
             str(paid_amount),
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            get_ist_now().strftime('%Y-%m-%d %H:%M:%S')
         ]
         self._update_row(SHEET_ORDERS, row_id, values)
     

@@ -381,9 +381,8 @@ def orders():
             month_order_count += len(date_data['orders'])
         months_grouped.append((month_key, month_data['label'], dates_list, month_data['month_total'], month_data['month_pending'], month_order_count))
     
-    # Convert UTC times to IST for display (IST is UTC+5:30)
-    ist_offset = timedelta(hours=5, minutes=30)
-    return render_template('orders.html', months_grouped=months_grouped, total_sales=total_sales, total_pending=total_pending, total_orders=len(all_orders), ist_offset=ist_offset)
+    # Timestamps are now stored in IST, so no offset needed
+    return render_template('orders.html', months_grouped=months_grouped, total_sales=total_sales, total_pending=total_pending, total_orders=len(all_orders))
 
 
 @app.route('/reports')
