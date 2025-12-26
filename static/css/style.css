@@ -709,6 +709,96 @@ a {
     }
 }
 
+/* Shops page - Mobile optimized card layout */
+.shop-card {
+    background: white;
+    transition: all 0.2s ease;
+}
+
+.shop-card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.shop-update-form .form-control {
+    font-size: 1rem;
+    min-height: 44px;
+}
+
+.shop-update-form .btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shops-list .btn {
+    min-height: 44px;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shops-list .btn i {
+    font-size: 1.125rem;
+}
+
+/* Gap utility for flexbox */
+.gap-2 {
+    gap: var(--spacing-sm);
+}
+
+/* Desktop: Show table layout for shops and varieties */
+@media (min-width: 768px) {
+    .shops-list,
+    .varieties-list {
+        display: none;
+    }
+    
+    .shops-table,
+    .varieties-table {
+        display: block;
+    }
+}
+
+/* Mobile: Hide table, show cards */
+@media (max-width: 767px) {
+    .shops-table,
+    .varieties-table {
+        display: none;
+    }
+    
+    .shops-list,
+    .varieties-list {
+        display: block;
+    }
+}
+
+/* Varieties page - Mobile optimized card layout */
+.variety-card {
+    background: white;
+    transition: all 0.2s ease;
+}
+
+.variety-card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.variety-update-form .form-control {
+    font-size: 1rem;
+    min-height: 44px;
+}
+
+.variety-update-form .btn {
+    min-height: 44px;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 /* Tablet and up (768px+) */
 @media (min-width: 768px) {
     main {
