@@ -21,6 +21,11 @@ else:
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
 
+# Make USE_GOOGLE_SHEETS available to all templates
+@app.context_processor
+def inject_config():
+    return dict(USE_GOOGLE_SHEETS=USE_GOOGLE_SHEETS)
+
 if not USE_GOOGLE_SHEETS:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///brownie_sales.db'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -717,6 +722,24 @@ def delete_all_orders():
         db_session.rollback()
         flash(f'Error deleting orders: {str(e)}', 'error')
         return redirect(url_for('orders'))
+
+
+@app.route('/refresh-cache', methods=['POST'])
+def refresh_cache():
+    """Manually refresh Google Sheets cache"""
+    if not USE_GOOGLE_SHEETS:
+        flash('Cache refresh is only available when using Google Sheets', 'info')
+        return redirect(request.referrer or url_for('index'))
+    
+    try:
+        from google_sheets import get_gs_db
+        gs = get_gs_db()
+        gs.refresh_cache()  # Clear all cache
+        flash('Cache refreshed successfully! The app will now fetch fresh data from Google Sheets.', 'success')
+    except Exception as e:
+        flash(f'Error refreshing cache: {str(e)}', 'error')
+    
+    return redirect(request.referrer or url_for('index'))
 
 
 if __name__ == '__main__':

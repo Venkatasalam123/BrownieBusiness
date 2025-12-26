@@ -34,6 +34,9 @@ SHEET_ORDERS = 'Orders'
 class GoogleSheetsDB:
     """Google Sheets database interface"""
     
+    # Cache expiry time in seconds (default: 5 minutes)
+    CACHE_TTL = int(os.getenv('GOOGLE_SHEETS_CACHE_TTL', 300))  # 5 minutes default
+    
     def __init__(self):
         self.service = None
         # Cache for sheet data to avoid repeated API calls
@@ -73,6 +76,18 @@ class GoogleSheetsDB:
         else:
             self._cache.clear()
             self._cache_timestamp.clear()
+    
+    def refresh_cache(self, sheet_name=None):
+        """Public method to manually refresh/clear cache for a specific sheet or all sheets"""
+        self._clear_cache(sheet_name)
+        print(f"✓ Cache refreshed{' for ' + sheet_name if sheet_name else ' (all sheets)'}")
+    
+    def _is_cache_valid(self, cache_key):
+        """Check if cache entry is still valid (not expired)"""
+        if cache_key not in self._cache_timestamp:
+            return False
+        cache_age = time.time() - self._cache_timestamp[cache_key]
+        return cache_age < self.CACHE_TTL
     
     def _connect(self):
         """Connect to Google Sheets API"""
@@ -145,8 +160,14 @@ class GoogleSheetsDB:
         cache_key = f"{sheet_name}_{range_name or 'full'}"
         
         # Check cache first (only for full sheet reads, not specific ranges)
+        # Also check if cache is still valid (not expired)
         if use_cache and range_name is None and cache_key in self._cache:
-            return self._cache[cache_key]
+            if self._is_cache_valid(cache_key):
+                return self._cache[cache_key]
+            else:
+                # Cache expired, remove it
+                self._cache.pop(cache_key, None)
+                self._cache_timestamp.pop(cache_key, None)
         
         try:
             if range_name:
