@@ -15,62 +15,190 @@
             border: none;
             box-shadow: none;
         }
+        .bill-mobile {
+            display: none !important;
+        }
+        .bill-desktop {
+            display: block !important;
+        }
     }
     .bill-header {
-        border-bottom: 3px solid #667eea;
-        padding-bottom: 1rem;
-        margin-bottom: 2rem;
+        border-bottom: 3px solid var(--primary);
+        padding-bottom: var(--spacing-sm);
+        margin-bottom: var(--spacing-md);
+    }
+    .bill-header h1 {
+        font-size: 1.5rem;
+        margin-bottom: var(--spacing-xs);
+    }
+    .bill-info {
+        margin-bottom: var(--spacing-md);
+    }
+    .bill-info-row {
+        margin-bottom: var(--spacing-sm);
     }
     .bill-item {
-        border-bottom: 1px solid #e0e0e0;
-        padding: 1rem 0;
+        border-bottom: 1px solid var(--gray-200);
+        padding: var(--spacing-sm) 0;
     }
     .bill-total {
-        background: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin-top: 2rem;
+        background: var(--gray-100);
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        margin-top: var(--spacing-md);
+    }
+    .bill-total h3 {
+        font-size: 1rem;
+        margin-bottom: var(--spacing-xs);
+    }
+    .bill-total h1 {
+        font-size: 1.75rem;
     }
     #billContent {
         background: white;
-        max-width: 210mm; /* A4 width */
-        margin: 0 auto;
-        padding: 2rem;
+        padding: var(--spacing-sm);
     }
+    
+    /* Mobile Card Layout */
+    .bill-mobile {
+        display: block;
+    }
+    .bill-order-card {
+        background: white;
+        border: 1px solid var(--gray-200);
+        border-radius: var(--radius);
+        padding: var(--spacing-sm);
+        margin-bottom: var(--spacing-sm);
+    }
+    .bill-order-card .order-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--spacing-xs) 0;
+        border-bottom: 1px solid var(--gray-100);
+    }
+    .bill-order-card .order-row:last-child {
+        border-bottom: none;
+    }
+    .order-label {
+        font-weight: 500;
+        color: var(--gray-600);
+        font-size: 0.875rem;
+    }
+    .order-value {
+        font-weight: 600;
+        color: var(--gray-900);
+    }
+    .order-value.pending {
+        color: var(--danger);
+        font-size: 1.125rem;
+    }
+    
+    /* Desktop Table Layout */
+    .bill-desktop {
+        display: none;
+    }
+    
+    @media (min-width: 768px) {
+        .bill-header h1 {
+            font-size: 2rem;
+        }
+        .bill-total {
+            padding: var(--spacing-lg);
+        }
+        .bill-total h1 {
+            font-size: 2.5rem;
+        }
+        #billContent {
+            max-width: 210mm; /* A4 width */
+            margin: 0 auto;
+            padding: var(--spacing-xl);
+        }
+        .bill-mobile {
+            display: none;
+        }
+        .bill-desktop {
+            display: block;
+        }
+    }
+    
     @media print {
         #billContent {
             max-width: 100%;
             padding: 0;
+        }
+        .bill-mobile {
+            display: none !important;
+        }
+        .bill-desktop {
+            display: block !important;
         }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-12 col-md-10 col-lg-8">
+<div class="row">
+    <div class="col-12">
         <div class="card">
             <div class="card-body" id="billContent">
                 <!-- Bill Header -->
                 <div class="bill-header text-center">
-                    <h1 class="mb-2">INVOICE</h1>
-                    <p class="text-muted mb-0">Brownie Sales</p>
+                    <h1 class="mb-1">INVOICE</h1>
+                    <p class="text-muted mb-0 small">Brownie Sales</p>
                 </div>
 
-                <div class="row mb-4">
-                    <div class="col-md-6">
-                        <h5 class="text-muted">Bill To:</h5>
-                        <h4 class="mb-0">{{ shop.name }}</h4>
+                <!-- Bill Info -->
+                <div class="bill-info">
+                    <div class="bill-info-row">
+                        <div class="text-muted small">Bill To:</div>
+                        <div class="fw-bold">{{ shop.name }}</div>
                     </div>
-                    <div class="col-md-6 text-md-end">
-                        <h5 class="text-muted">Bill Date:</h5>
-                        <h4 class="mb-0">{{ bill_date.strftime('%B %d, %Y') }}</h4>
+                    <div class="bill-info-row">
+                        <div class="text-muted small">Bill Date:</div>
+                        <div>{{ bill_date.strftime('%B %d, %Y') }}</div>
                     </div>
                 </div>
 
                 {% if unpaid_orders %}
-                <!-- Unpaid Orders Table -->
-                <div class="table-responsive">
+                <!-- Mobile Card Layout -->
+                <div class="bill-mobile">
+                    {% for item in unpaid_orders %}
+                    <div class="bill-order-card">
+                        <div class="order-row">
+                            <span class="order-label">Date:</span>
+                            <span class="order-value">{{ item.order.delivery_date.strftime('%d-%m-%Y') }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Variety:</span>
+                            <span class="order-value">{{ item.order.variety.name }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Quantity:</span>
+                            <span class="order-value">{{ item.order.quantity }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Price/Unit:</span>
+                            <span class="order-value">₹{{ "%.2f"|format(item.order.price) }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Total:</span>
+                            <span class="order-value">₹{{ "%.2f"|format(item.total) }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Paid:</span>
+                            <span class="order-value">₹{{ "%.2f"|format(item.paid) }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Pending:</span>
+                            <span class="order-value pending">₹{{ "%.2f"|format(item.pending) }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Desktop Table Layout -->
+                <div class="bill-desktop table-responsive">
                     <table class="table table-bordered">
                         <thead class="table-light">
                             <tr>
@@ -110,13 +238,13 @@
                     <h1 class="text-danger mb-0">₹{{ "%.2f"|format(total_pending) }}</h1>
                 </div>
 
-                <div class="mt-4 text-center text-muted">
-                    <p class="mb-0">Thank you for your business!</p>
-                    <p class="mb-0"><small>Please make payment at your earliest convenience.</small></p>
+                <div class="mt-3 text-center text-muted">
+                    <p class="mb-1 small">Thank you for your business!</p>
+                    <p class="mb-0 small">Please make payment at your earliest convenience.</p>
                 </div>
 
                 {% else %}
-                <div class="text-center py-5">
+                <div class="text-center py-4">
                     <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
                     <h4>No Pending Payments</h4>
                     <p class="text-muted">All orders for {{ shop.name }} have been paid.</p>
@@ -124,11 +252,11 @@
                 {% endif %}
 
                 <!-- Action Buttons -->
-                <div class="mt-4 text-center no-print">
-                    <button onclick="window.print()" class="btn btn-primary me-2">
+                <div class="mt-3 text-center no-print">
+                    <button onclick="window.print()" class="btn btn-primary btn-lg w-100 mb-2">
                         <i class="fas fa-print me-2"></i>Print / Save as PDF
                     </button>
-                    <a href="{{ url_for('shops') }}" class="btn btn-secondary">
+                    <a href="{{ url_for('shops') }}" class="btn btn-secondary btn-lg w-100">
                         <i class="fas fa-arrow-left me-2"></i>Back to Shops
                     </a>
                 </div>
