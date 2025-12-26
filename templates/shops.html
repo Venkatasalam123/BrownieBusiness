@@ -28,16 +28,21 @@
 
         <div class="card">
             <div class="card-header">
-                <h2 class="card-title mb-0">
-                    <i class="fas fa-store me-2"></i>Existing Shops/Customers
-                </h2>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h2 class="card-title mb-0">
+                        <i class="fas fa-store me-2"></i>Existing Shops/Customers
+                    </h2>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="filterPendingBtn" onclick="togglePendingFilter()">
+                        <i class="fas fa-filter me-1"></i><span id="filterText">Show Pending Only</span>
+                    </button>
+                </div>
             </div>
             <div class="card-body">
                 {% if shops_with_pending %}
                 <!-- Mobile Card Layout -->
                 <div class="shops-list">
                     {% for item in shops_with_pending %}
-                    <div class="shop-card mb-3 p-3 border rounded">
+                    <div class="shop-card mb-3 p-3 border rounded" data-pending="{{ item.pending }}">
                         <!-- Shop Name -->
                         <div class="mb-2">
                             <strong class="shop-name">{{ item.shop.name }}</strong>
@@ -110,7 +115,7 @@
                         </thead>
                         <tbody>
                             {% for item in shops_with_pending %}
-                            <tr>
+                            <tr data-pending="{{ item.pending }}">
                                 <td><strong>{{ item.shop.name }}</strong></td>
                                 <td>
                                     {% if item.pending > 0 %}
@@ -175,6 +180,60 @@
 
 {% block extra_js %}
 <script>
+let showPendingOnly = false;
+
+function togglePendingFilter() {
+    showPendingOnly = !showPendingOnly;
+    const filterBtn = document.getElementById('filterPendingBtn');
+    const filterText = document.getElementById('filterText');
+    
+    // Update button text and style
+    if (showPendingOnly) {
+        filterText.textContent = 'Show All';
+        filterBtn.classList.remove('btn-outline-primary');
+        filterBtn.classList.add('btn-primary');
+    } else {
+        filterText.textContent = 'Show Pending Only';
+        filterBtn.classList.remove('btn-primary');
+        filterBtn.classList.add('btn-outline-primary');
+    }
+    
+    // Filter mobile cards
+    const shopCards = document.querySelectorAll('.shop-card');
+    shopCards.forEach(card => {
+        const pending = parseFloat(card.getAttribute('data-pending')) || 0;
+        if (showPendingOnly) {
+            card.style.display = pending > 0 ? 'block' : 'none';
+        } else {
+            card.style.display = 'block';
+        }
+    });
+    
+    // Filter desktop table rows
+    const tableRows = document.querySelectorAll('.shops-table tbody tr');
+    tableRows.forEach(row => {
+        // Skip the hidden update form rows
+        if (row.classList.contains('d-none') || row.id && row.id.startsWith('update-row-')) {
+            return;
+        }
+        const pending = parseFloat(row.getAttribute('data-pending')) || 0;
+        if (showPendingOnly) {
+            row.style.display = pending > 0 ? '' : 'none';
+        } else {
+            row.style.display = '';
+        }
+    });
+    
+    // Also hide/show the corresponding update form rows
+    const updateRows = document.querySelectorAll('.shops-table tbody tr[id^="update-row-"]');
+    updateRows.forEach(updateRow => {
+        const mainRow = updateRow.previousElementSibling;
+        if (mainRow && mainRow.style.display === 'none') {
+            updateRow.style.display = 'none';
+        }
+    });
+}
+
 function editShopName(shopId, currentName) {
     // Check if mobile or desktop
     const mobileForm = document.getElementById(`update-form-${shopId}`);
