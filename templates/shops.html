@@ -13,19 +13,15 @@
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('add_shop') }}">
-                    <div class="row">
-                        <div class="col-md-10 mb-3">
-                            <label for="name" class="form-label">
-                                <i class="fas fa-store me-2"></i>Shop/Customer Name <span class="text-danger">*</span>
-                            </label>
-                            <input type="text" class="form-control form-control-lg" id="name" name="name" required>
-                        </div>
-                        <div class="col-md-2 mb-3 d-flex align-items-end">
-                            <button type="submit" class="btn btn-primary btn-lg w-100">
-                                <i class="fas fa-plus me-1"></i>Add
-                            </button>
-                        </div>
+                    <div class="mb-3">
+                        <label for="name" class="form-label">
+                            <i class="fas fa-store me-2"></i>Shop/Customer Name <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" class="form-control form-control-lg" id="name" name="name" required>
                     </div>
+                    <button type="submit" class="btn btn-primary btn-lg w-100">
+                        <i class="fas fa-plus me-2"></i>Add Shop/Customer
+                    </button>
                 </form>
             </div>
         </div>

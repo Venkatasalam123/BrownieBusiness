@@ -13,25 +13,21 @@
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('add_variety') }}">
-                    <div class="row">
-                        <div class="col-md-5 mb-3">
-                            <label for="name" class="form-label">
-                                <i class="fas fa-tag me-2"></i>Variety Name <span class="text-danger">*</span>
-                            </label>
-                            <input type="text" class="form-control form-control-lg" id="name" name="name" required>
-                        </div>
-                        <div class="col-md-5 mb-3">
-                            <label for="default_price" class="form-label">
-                                <i class="fas fa-rupee-sign me-2"></i>Default Price (₹) <span class="text-danger">*</span>
-                            </label>
-                            <input type="number" class="form-control form-control-lg" id="default_price" name="default_price" step="0.01" min="0.01" required>
-                        </div>
-                        <div class="col-md-2 mb-3 d-flex align-items-end">
-                            <button type="submit" class="btn btn-primary btn-lg w-100">
-                                <i class="fas fa-plus me-1"></i>Add
-                            </button>
-                        </div>
+                    <div class="mb-3">
+                        <label for="name" class="form-label">
+                            <i class="fas fa-tag me-2"></i>Variety Name <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" class="form-control form-control-lg" id="name" name="name" required>
                     </div>
+                    <div class="mb-3">
+                        <label for="default_price" class="form-label">
+                            <i class="fas fa-rupee-sign me-2"></i>Default Price (₹) <span class="text-danger">*</span>
+                        </label>
+                        <input type="number" class="form-control form-control-lg" id="default_price" name="default_price" step="0.01" min="0.01" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg w-100">
+                        <i class="fas fa-plus me-2"></i>Add Variety
+                    </button>
                 </form>
             </div>
         </div>
