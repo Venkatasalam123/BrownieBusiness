@@ -12,6 +12,40 @@
                 </h2>
             </div>
             <div class="card-body">
+                <!-- Shop Filter -->
+                <div class="mb-4">
+                    <form method="GET" action="{{ url_for('orders') }}" class="d-flex align-items-center gap-3 flex-wrap">
+                        <label for="shop_filter" class="form-label mb-0">
+                            <i class="fas fa-filter me-2"></i><strong>Filter by Shop:</strong>
+                        </label>
+                        <select name="shop_id" id="shop_filter" class="form-select" style="max-width: 300px;" onchange="this.form.submit()">
+                            <option value="">All Shops</option>
+                            {% for shop in all_shops %}
+                            <option value="{{ shop.id }}" {% if shop_id_filter == shop.id %}selected{% endif %}>
+                                {{ shop.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        {% if shop_id_filter %}
+                        <a href="{{ url_for('orders') }}" class="btn btn-outline-secondary btn-sm">
+                            <i class="fas fa-times me-1"></i>Clear Filter
+                        </a>
+                        {% endif %}
+                    </form>
+                    {% if selected_shop %}
+                    <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+                        <span class="badge bg-info">
+                            <i class="fas fa-store me-1"></i>Showing orders for: <strong>{{ selected_shop.name }}</strong>
+                        </span>
+                        <form method="POST" action="{{ url_for('mark_all_orders_paid', shop_id=selected_shop.id) }}" class="d-inline">
+                            <button type="submit" class="btn btn-success btn-sm" onclick="return confirm('Mark ALL unpaid orders for {{ selected_shop.name }} as paid?');">
+                                <i class="fas fa-check-double me-1"></i>Mark All as Paid
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+                
                 {% if months_grouped %}
                     {% for month_key, month_label, dates_list, month_total, month_pending, month_order_count in months_grouped %}
                     <div class="mb-4">
@@ -100,6 +134,16 @@
                                                     </small>
                                                 </td>
                                                 <td>
+                                                    {% if payment_status != 'paid' %}
+                                                    <form method="POST" action="{{ url_for('mark_order_paid', id=order.id) }}" class="d-inline">
+                                                        {% if shop_id_filter %}
+                                                        <input type="hidden" name="shop_id" value="{{ shop_id_filter }}">
+                                                        {% endif %}
+                                                        <button type="submit" class="btn btn-sm btn-success me-1" title="Mark as Paid">
+                                                            <i class="fas fa-check"></i> Paid
+                                                        </button>
+                                                    </form>
+                                                    {% endif %}
                                                     <a href="{{ url_for('edit_order', id=order.id) }}" class="btn btn-sm btn-primary" title="Edit Order">
                                                         <i class="fas fa-edit"></i>
                                                     </a>
@@ -167,10 +211,17 @@
                 {% else %}
                     <div class="text-center py-5">
                         <i class="fas fa-shopping-cart fa-3x text-muted mb-3"></i>
-                        <p class="text-muted">No orders found. Start by adding your first order!</p>
-                        <a href="{{ url_for('index') }}" class="btn btn-primary btn-lg mt-3">
-                            <i class="fas fa-plus-circle me-2"></i>Add Order
-                        </a>
+                        {% if selected_shop %}
+                            <p class="text-muted">No orders found for <strong>{{ selected_shop.name }}</strong>.</p>
+                            <a href="{{ url_for('orders') }}" class="btn btn-outline-secondary btn-lg mt-3 me-2">
+                                <i class="fas fa-list me-2"></i>Show All Orders
+                            </a>
+                        {% else %}
+                            <p class="text-muted">No orders found. Start by adding your first order!</p>
+                            <a href="{{ url_for('index') }}" class="btn btn-primary btn-lg mt-3">
+                                <i class="fas fa-plus-circle me-2"></i>Add Order
+                            </a>
+                        {% endif %}
                     </div>
                 {% endif %}
             </div>

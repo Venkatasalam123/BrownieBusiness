@@ -56,6 +56,11 @@
                             <i class="fas fa-chart-bar me-2"></i>Reports
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('cost_breakdown') }}">
+                            <i class="fas fa-calculator me-2"></i>Cost Breakdown
+                        </a>
+                    </li>
                     {% if USE_GOOGLE_SHEETS %}
                     <li class="nav-item">
                         <form method="POST" action="{{ url_for('refresh_cache') }}" class="d-inline" onsubmit="return confirm('Refresh cache to get latest data from Google Sheets?');">

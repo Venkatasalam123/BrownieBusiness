@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+
+{% block title %}Cost Breakdown - Brownie Sales Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-calculator me-2"></i>Production Cost Breakdown
+                </h2>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('cost_breakdown') }}">
+                    <div class="row mb-4">
+                        <div class="col-md-6 mb-3">
+                            <label for="year" class="form-label">
+                                <i class="fas fa-calendar-alt me-2"></i>Year <span class="text-danger">*</span>
+                            </label>
+                            <select name="year" id="year" class="form-select" required>
+                                {% for year in available_years %}
+                                <option value="{{ year }}" {% if selected_year == year %}selected{% endif %}>{{ year }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="month" class="form-label">
+                                <i class="fas fa-calendar me-2"></i>Month <span class="text-danger">*</span>
+                            </label>
+                            <select name="month" id="month" class="form-select" required>
+                                <option value="1" {% if selected_month == 1 %}selected{% endif %}>January</option>
+                                <option value="2" {% if selected_month == 2 %}selected{% endif %}>February</option>
+                                <option value="3" {% if selected_month == 3 %}selected{% endif %}>March</option>
+                                <option value="4" {% if selected_month == 4 %}selected{% endif %}>April</option>
+                                <option value="5" {% if selected_month == 5 %}selected{% endif %}>May</option>
+                                <option value="6" {% if selected_month == 6 %}selected{% endif %}>June</option>
+                                <option value="7" {% if selected_month == 7 %}selected{% endif %}>July</option>
+                                <option value="8" {% if selected_month == 8 %}selected{% endif %}>August</option>
+                                <option value="9" {% if selected_month == 9 %}selected{% endif %}>September</option>
+                                <option value="10" {% if selected_month == 10 %}selected{% endif %}>October</option>
+                                <option value="11" {% if selected_month == 11 %}selected{% endif %}>November</option>
+                                <option value="12" {% if selected_month == 12 %}selected{% endif %}>December</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <h5 class="mb-3"><i class="fas fa-shopping-basket me-2"></i>Ingredient Prices</h5>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="egg_price" class="form-label">
+                                <i class="fas fa-egg me-2"></i>Egg Price (per piece) ₹
+                            </label>
+                            <input type="number" step="0.01" min="0" name="egg_price" id="egg_price" class="form-control" 
+                                   value="{{ egg_price if egg_price else '' }}" placeholder="e.g., 8.00" required>
+                            <small class="text-muted">1 egg for 4 brownies</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="sugar_price" class="form-label">
+                                <i class="fas fa-cube me-2"></i>Sugar Price (per kg) ₹
+                            </label>
+                            <input type="number" step="0.01" min="0" name="sugar_price" id="sugar_price" class="form-control" 
+                                   value="{{ sugar_price if sugar_price else '' }}" placeholder="e.g., 50.00" required>
+                            <small class="text-muted">55g for 4 brownies</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="brown_sugar_price" class="form-label">
+                                <i class="fas fa-cube me-2"></i>Brown Sugar Price (per kg) ₹
+                            </label>
+                            <input type="number" step="0.01" min="0" name="brown_sugar_price" id="brown_sugar_price" class="form-control" 
+                                   value="{{ brown_sugar_price if brown_sugar_price else '' }}" placeholder="e.g., 55.00" required>
+                            <small class="text-muted">55g for 4 brownies</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="maida_price" class="form-label">
+                                <i class="fas fa-wheat-awn me-2"></i>Maida/Ragi Price (per kg) ₹
+                            </label>
+                            <input type="number" step="0.01" min="0" name="maida_price" id="maida_price" class="form-control" 
+                                   value="{{ maida_price if maida_price else '' }}" placeholder="e.g., 60.00" required>
+                            <small class="text-muted">120g for 4 brownies</small>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="fas fa-calculator me-2"></i>Calculate Costs
+                        </button>
+                    </div>
+                </form>
+                
+                {% if breakdown %}
+                <hr class="my-5">
+                
+                <div class="card bg-light">
+                    <div class="card-header">
+                        <h4 class="mb-0">
+                            <i class="fas fa-chart-pie me-2"></i>Cost Breakdown for {{ breakdown.month_name }}
+                        </h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-4">
+                            <div class="col-md-4">
+                                <div class="text-center p-3 bg-white rounded">
+                                    <h6 class="text-muted mb-2">Total Brownies</h6>
+                                    <h3 class="mb-0 fw-bold">{{ breakdown.total_brownies }}</h3>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="text-center p-3 bg-white rounded">
+                                    <h6 class="text-muted mb-2">Total Orders</h6>
+                                    <h3 class="mb-0 fw-bold">{{ breakdown.total_orders }}</h3>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="text-center p-3 bg-success text-white rounded">
+                                    <h6 class="mb-2">Total Production Cost</h6>
+                                    <h3 class="mb-0 fw-bold">₹{{ "%.2f"|format(breakdown.total_cost) }}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h5 class="mb-3">Ingredient Breakdown</h5>
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Ingredient</th>
+                                        <th>Quantity Needed</th>
+                                        <th>Price per Unit</th>
+                                        <th>Total Cost</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong><i class="fas fa-egg me-2"></i>Egg</strong></td>
+                                        <td>{{ "%.2f"|format(breakdown.egg.quantity) }} {{ breakdown.egg.unit }}</td>
+                                        <td>₹{{ "%.2f"|format(breakdown.egg.price_per_unit) }} per {{ breakdown.egg.unit }}</td>
+                                        <td><strong>₹{{ "%.2f"|format(breakdown.egg.total_cost) }}</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong><i class="fas fa-cube me-2"></i>Sugar</strong></td>
+                                        <td>{{ "%.3f"|format(breakdown.sugar.quantity) }} {{ breakdown.sugar.unit }}</td>
+                                        <td>₹{{ "%.2f"|format(breakdown.sugar.price_per_unit) }} per {{ breakdown.sugar.unit }}</td>
+                                        <td><strong>₹{{ "%.2f"|format(breakdown.sugar.total_cost) }}</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong><i class="fas fa-cube me-2"></i>Brown Sugar</strong></td>
+                                        <td>{{ "%.3f"|format(breakdown.brown_sugar.quantity) }} {{ breakdown.brown_sugar.unit }}</td>
+                                        <td>₹{{ "%.2f"|format(breakdown.brown_sugar.price_per_unit) }} per {{ breakdown.brown_sugar.unit }}</td>
+                                        <td><strong>₹{{ "%.2f"|format(breakdown.brown_sugar.total_cost) }}</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong><i class="fas fa-wheat-awn me-2"></i>Maida/Ragi</strong></td>
+                                        <td>{{ "%.3f"|format(breakdown.maida.quantity) }} {{ breakdown.maida.unit }}</td>
+                                        <td>₹{{ "%.2f"|format(breakdown.maida.price_per_unit) }} per {{ breakdown.maida.unit }}</td>
+                                        <td><strong>₹{{ "%.2f"|format(breakdown.maida.total_cost) }}</strong></td>
+                                    </tr>
+                                    <tr class="table-success">
+                                        <td colspan="3" class="text-end"><strong>Total Production Cost:</strong></td>
+                                        <td><strong class="fs-5">₹{{ "%.2f"|format(breakdown.total_cost) }}</strong></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

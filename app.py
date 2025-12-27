@@ -336,8 +336,20 @@ def delete_shop(id):
 @app.route('/orders')
 def orders():
     """Order history page - shows all orders grouped by month, then by date"""
+    # Get filter parameter
+    shop_id_filter = request.args.get('shop_id', type=int)
+    
+    # Get all shops for filter dropdown
+    all_shops = Shop.query.order_by(Shop.name).all()
+    
     # Get all orders ordered by delivery date (newest first)
-    all_orders = Order.query.order_by(Order.delivery_date.desc(), Order.created_at.desc()).all()
+    if shop_id_filter:
+        # Filter orders by shop
+        all_orders = Order.query.filter_by(shop_id=shop_id_filter).order_by(Order.delivery_date.desc(), Order.created_at.desc()).all()
+        selected_shop = Shop.query.get(shop_id_filter)
+    else:
+        all_orders = Order.query.order_by(Order.delivery_date.desc(), Order.created_at.desc()).all()
+        selected_shop = None
     
     # Group orders by month, then by date
     orders_by_month = {}
@@ -387,7 +399,146 @@ def orders():
         months_grouped.append((month_key, month_data['label'], dates_list, month_data['month_total'], month_data['month_pending'], month_order_count))
     
     # Timestamps are now stored in IST, so no offset needed
-    return render_template('orders.html', months_grouped=months_grouped, total_sales=total_sales, total_pending=total_pending, total_orders=len(all_orders))
+    return render_template('orders.html', months_grouped=months_grouped, total_sales=total_sales, total_pending=total_pending, total_orders=len(all_orders), all_shops=all_shops, selected_shop=selected_shop, shop_id_filter=shop_id_filter)
+
+
+@app.route('/cost-breakdown', methods=['GET', 'POST'])
+def cost_breakdown():
+    """Cost breakdown page for brownie production costs"""
+    # Get current month and year as default
+    current_month = datetime.now().month
+    current_year = datetime.now().year
+    
+    # Get all available years and months for dropdown
+    if USE_GOOGLE_SHEETS:
+        all_orders = Order.query.all()
+        years = sorted(set(order.delivery_date.year for order in all_orders if order.delivery_date), reverse=True)
+    else:
+        years = db.session.query(extract('year', Order.delivery_date).label('year')).distinct().order_by(text('year desc')).all()
+        years = [int(y[0]) for y in years if y[0]]
+    
+    available_years = years if years else [current_year]
+    
+    # Handle POST request (calculate costs)
+    if request.method == 'POST':
+        try:
+            # Get form data
+            selected_year = request.form.get('year', type=int, default=current_year)
+            selected_month = request.form.get('month', type=int, default=current_month)
+            
+            # Get ingredient prices
+            egg_price_per_piece = request.form.get('egg_price', type=float, default=0)
+            sugar_price_per_kg = request.form.get('sugar_price', type=float, default=0)
+            brown_sugar_price_per_kg = request.form.get('brown_sugar_price', type=float, default=0)
+            maida_price_per_kg = request.form.get('maida_price', type=float, default=0)
+            
+            # Get all orders for the selected month
+            if USE_GOOGLE_SHEETS:
+                all_orders = Order.query.all()
+                orders = [
+                    order for order in all_orders
+                    if order.delivery_date and order.delivery_date.year == selected_year and order.delivery_date.month == selected_month
+                ]
+            else:
+                orders = Order.query.filter(
+                    extract('year', Order.delivery_date) == selected_year,
+                    extract('month', Order.delivery_date) == selected_month
+                ).all()
+            
+            # Calculate total brownies quantity for the month
+            # Price rules:
+            # - Prices >= 15 (including 25, 28, 32, 35) → count as 1 brownie per unit
+            # - Prices < 15 → count as 0.5 brownie per unit
+            # Example: price=25, quantity=2 → 2 brownies
+            # Example: price=12.5, quantity=1 → 0.5 brownies
+            total_brownies = 0
+            for order in orders:
+                order_price = float(order.price)
+                order_quantity = float(order.quantity)
+                # Determine brownie count based on price
+                if order_price >= 15:
+                    # Full brownie (25, 28, 32, 35, etc.)
+                    brownies_per_unit = 1.0
+                else:
+                    # Half brownie (price < 15, like 12.5)
+                    brownies_per_unit = 0.5
+                brownies_for_order = brownies_per_unit * order_quantity
+                total_brownies += brownies_for_order
+            
+            # Calculate quantities needed (per 4 brownies)
+            # 1 egg for 4 brownies, 55g sugar for 4 brownies, 55g brown sugar for 4 brownies, 120g maida/ragi for 4 brownies
+            batches_of_4 = total_brownies / 4.0  # How many batches of 4 brownies
+            
+            total_eggs_needed = batches_of_4
+            total_sugar_needed_kg = (batches_of_4 * 55) / 1000.0  # Convert grams to kg
+            total_brown_sugar_needed_kg = (batches_of_4 * 55) / 1000.0  # Convert grams to kg
+            total_maida_needed_kg = (batches_of_4 * 120) / 1000.0  # Convert grams to kg
+            
+            # Calculate costs
+            egg_cost = total_eggs_needed * egg_price_per_piece
+            sugar_cost = total_sugar_needed_kg * sugar_price_per_kg
+            brown_sugar_cost = total_brown_sugar_needed_kg * brown_sugar_price_per_kg
+            maida_cost = total_maida_needed_kg * maida_price_per_kg
+            
+            total_cost = egg_cost + sugar_cost + brown_sugar_cost + maida_cost
+            
+            # Prepare breakdown data
+            breakdown = {
+                'selected_year': selected_year,
+                'selected_month': selected_month,
+                'month_name': datetime(selected_year, selected_month, 1).strftime('%B %Y'),
+                'total_brownies': total_brownies,
+                'total_orders': len(orders),
+                'egg': {
+                    'quantity': total_eggs_needed,
+                    'unit': 'pieces',
+                    'price_per_unit': egg_price_per_piece,
+                    'total_cost': egg_cost
+                },
+                'sugar': {
+                    'quantity': total_sugar_needed_kg,
+                    'unit': 'kg',
+                    'price_per_unit': sugar_price_per_kg,
+                    'total_cost': sugar_cost
+                },
+                'brown_sugar': {
+                    'quantity': total_brown_sugar_needed_kg,
+                    'unit': 'kg',
+                    'price_per_unit': brown_sugar_price_per_kg,
+                    'total_cost': brown_sugar_cost
+                },
+                'maida': {
+                    'quantity': total_maida_needed_kg,
+                    'unit': 'kg',
+                    'price_per_unit': maida_price_per_kg,
+                    'total_cost': maida_cost
+                },
+                'total_cost': total_cost
+            }
+            
+            return render_template('cost_breakdown.html',
+                                 current_month=current_month,
+                                 current_year=current_year,
+                                 available_years=available_years,
+                                 selected_year=selected_year,
+                                 selected_month=selected_month,
+                                 egg_price=egg_price_per_piece,
+                                 sugar_price=sugar_price_per_kg,
+                                 brown_sugar_price=brown_sugar_price_per_kg,
+                                 maida_price=maida_price_per_kg,
+                                 breakdown=breakdown)
+        
+        except Exception as e:
+            flash(f'Error calculating costs: {str(e)}', 'error')
+    
+    # GET request - show form
+    return render_template('cost_breakdown.html',
+                         current_month=current_month,
+                         current_year=current_year,
+                         available_years=available_years,
+                         selected_year=current_year,
+                         selected_month=current_month,
+                         breakdown=None)
 
 
 @app.route('/reports')
@@ -707,6 +858,111 @@ def edit_order(id):
     varieties = Variety.query.order_by(Variety.name).all()
     shops = Shop.query.order_by(Shop.name).all()
     return render_template('edit_order.html', order=order, varieties=varieties, shops=shops)
+
+
+@app.route('/orders/mark-paid/<int:id>', methods=['POST'])
+def mark_order_paid(id):
+    """Mark an order as paid with one click"""
+    try:
+        order = Order.query.get_or_404(id)
+        
+        # Calculate total amount
+        total_amount = float(order.price * order.quantity)
+        
+        # Update payment status to paid
+        if USE_GOOGLE_SHEETS:
+            # For Google Sheets, update via API
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.update_order(
+                id,
+                order.variety_id,
+                order.shop_id,
+                order.quantity,
+                order.price,
+                order.delivery_date,
+                'paid',
+                Decimal(str(total_amount))
+            )
+        else:
+            # For SQLite, update the object and commit
+            order.payment_status = 'paid'
+            order.paid_amount = Decimal(str(total_amount))
+            db_session.commit()
+        
+        flash(f'Order marked as paid! Amount: ₹{total_amount:.2f}', 'success')
+        
+        # Redirect back to orders page, preserving filter if present
+        shop_id = request.form.get('shop_id', type=int)
+        if shop_id:
+            return redirect(url_for('orders', shop_id=shop_id))
+        return redirect(url_for('orders'))
+    
+    except Exception as e:
+        if not USE_GOOGLE_SHEETS:
+            db_session.rollback()
+        flash(f'Error marking order as paid: {str(e)}', 'error')
+        shop_id = request.form.get('shop_id', type=int)
+        if shop_id:
+            return redirect(url_for('orders', shop_id=shop_id))
+        return redirect(url_for('orders'))
+
+
+@app.route('/orders/mark-all-paid/<int:shop_id>', methods=['POST'])
+def mark_all_orders_paid(shop_id):
+    """Mark all unpaid/partial orders for a shop as paid"""
+    try:
+        shop = Shop.query.get_or_404(shop_id)
+        
+        # Get all orders for this shop that are not fully paid
+        all_orders = Order.query.filter_by(shop_id=shop_id).all()
+        unpaid_orders = []
+        total_amount = 0
+        
+        for order in all_orders:
+            order_total = float(order.price * order.quantity)
+            paid_amt = float(order.paid_amount) if order.paid_amount else 0
+            pending_amt = order_total - paid_amt
+            
+            if pending_amt > 0:  # Only mark unpaid or partially paid orders
+                unpaid_orders.append(order)
+                total_amount += order_total
+        
+        if not unpaid_orders:
+            flash(f'All orders for {shop.name} are already paid!', 'info')
+            return redirect(url_for('orders', shop_id=shop_id))
+        
+        # Mark all unpaid orders as paid
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            for order in unpaid_orders:
+                order_total = float(order.price * order.quantity)
+                gs.update_order(
+                    order.id,
+                    order.variety_id,
+                    order.shop_id,
+                    order.quantity,
+                    order.price,
+                    order.delivery_date,
+                    'paid',
+                    Decimal(str(order_total))
+                )
+        else:
+            for order in unpaid_orders:
+                order_total = float(order.price * order.quantity)
+                order.payment_status = 'paid'
+                order.paid_amount = Decimal(str(order_total))
+            db_session.commit()
+        
+        flash(f'Marked {len(unpaid_orders)} order(s) as paid for {shop.name}! Total: ₹{total_amount:.2f}', 'success')
+        return redirect(url_for('orders', shop_id=shop_id))
+    
+    except Exception as e:
+        if not USE_GOOGLE_SHEETS:
+            db_session.rollback()
+        flash(f'Error marking orders as paid: {str(e)}', 'error')
+        return redirect(url_for('orders', shop_id=shop_id))
 
 
 @app.route('/orders/delete-all', methods=['POST'])
