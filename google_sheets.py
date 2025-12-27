@@ -456,7 +456,7 @@ class GoogleSheetsDB:
                         'id': i,
                         'variety_id': int(row[0]) if row[0] else None,
                         'shop_id': int(row[1]) if row[1] else None,
-                        'quantity': int(row[2]) if row[2] else 0,
+                        'quantity': int(float(row[2])) if row[2] else 0,  # Convert to float first to handle "5.0" strings
                         'price': Decimal(str(row[3])) if row[3] else Decimal('0'),
                         'delivery_date': datetime.strptime(row[4], '%Y-%m-%d').date() if row[4] else None,
                         'payment_status': row[5] if len(row) > 5 else 'unpaid',
