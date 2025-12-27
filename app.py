@@ -466,13 +466,13 @@ def cost_breakdown():
                 total_brownies += brownies_for_order
             
             # Calculate quantities needed (per 4 brownies)
-            # 1 egg for 4 brownies, 55g sugar for 4 brownies, 55g brown sugar for 4 brownies, 120g maida/ragi for 4 brownies
+            # 1 egg for 4 brownies, 13g white sugar for 4 brownies, 13g brown sugar for 4 brownies, 30g maida/ragi for 4 brownies
             batches_of_4 = total_brownies / 4.0  # How many batches of 4 brownies
             
             total_eggs_needed = batches_of_4
-            total_sugar_needed_kg = (batches_of_4 * 55) / 1000.0  # Convert grams to kg
-            total_brown_sugar_needed_kg = (batches_of_4 * 55) / 1000.0  # Convert grams to kg
-            total_maida_needed_kg = (batches_of_4 * 120) / 1000.0  # Convert grams to kg
+            total_sugar_needed_kg = (batches_of_4 * 13) / 1000.0  # Convert grams to kg
+            total_brown_sugar_needed_kg = (batches_of_4 * 13) / 1000.0  # Convert grams to kg
+            total_maida_needed_kg = (batches_of_4 * 30) / 1000.0  # Convert grams to kg
             
             # Calculate costs
             egg_cost = total_eggs_needed * egg_price_per_piece
