@@ -70,8 +70,9 @@
                 </div>
                 <div class="col-md-3 mb-3">
                     <div class="stat-card" style="background: var(--success-gradient);">
-                        <h5><i class="fas fa-chart-line me-2"></i>Margin (30%)</h5>
+                        <h5><i class="fas fa-chart-line me-2"></i>Profit</h5>
                         <h3 id="margin">₹0.00</h3>
+                        <small class="text-muted" id="profitPercentage">0.00% margin</small>
                     </div>
                 </div>
                 <div class="col-md-3 mb-3">
@@ -116,6 +117,22 @@
                 </div>
             </div>
 
+            <!-- Profit by Month Chart -->
+            <div class="row mb-4">
+                <div class="col-12 mb-3">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-chart-bar me-2"></i>Profit by Month
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="profitByMonthChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Shop-wise Breakdown Table -->
             <div class="card mb-4">
                 <div class="card-header bg-secondary text-white">
@@ -144,7 +161,7 @@
             <div class="card">
                 <div class="card-header bg-secondary text-white">
                     <h5 class="mb-0">
-                        <i class="fas fa-list me-2"></i>Variety Breakdown
+                        <i class="fas fa-list me-2"></i>Variety Cost Breakdown
                     </h5>
                 </div>
                 <div class="card-body">
@@ -153,7 +170,12 @@
                             <thead>
                                 <tr>
                                     <th><i class="fas fa-layer-group me-2"></i>Variety</th>
+                                    <th><i class="fas fa-hashtag me-2"></i>Qty</th>
+                                    <th><i class="fas fa-cookie me-2"></i>Brownies</th>
+                                    <th><i class="fas fa-rupee-sign me-2"></i>Cost/Brownie</th>
+                                    <th><i class="fas fa-rupee-sign me-2"></i>Total Cost</th>
                                     <th><i class="fas fa-rupee-sign me-2"></i>Total Sales</th>
+                                    <th><i class="fas fa-percentage me-2"></i>Profit %</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -173,6 +195,7 @@
 <script>
     let shopChart = null;
     let varietyChart = null;
+    let profitByMonthChart = null;
 
     // Toggle monthly filters visibility
     document.querySelectorAll('input[name="report_type"]').forEach(radio => {
@@ -211,7 +234,13 @@
 
                 // Update summary statistics
                 document.getElementById('totalSales').textContent = '₹' + data.total_sales.toFixed(2);
-                document.getElementById('margin').textContent = '₹' + data.margin.toFixed(2);
+                const profitColor = data.margin < 0 ? 'text-danger' : 'text-success';
+                const marginElement = document.getElementById('margin');
+                marginElement.textContent = '₹' + data.margin.toFixed(2);
+                marginElement.className = profitColor;
+                const profitPercentageElement = document.getElementById('profitPercentage');
+                profitPercentageElement.textContent = data.profit_percentage.toFixed(2) + '% margin';
+                profitPercentageElement.className = 'text-muted ' + (data.margin < 0 ? 'text-danger' : '');
                 document.getElementById('totalPending').textContent = '₹' + data.total_pending.toFixed(2);
                 document.getElementById('totalOrders').textContent = data.total_orders;
 
@@ -227,6 +256,9 @@
                 }
                 varietyChart = createPieChart('varietyChart', data.variety_data.labels, data.variety_data.values, 'Sales by Variety');
 
+                // Load profit by month chart
+                loadProfitByMonthChart();
+
                 // Update shop table
                 const shopTableBody = document.querySelector('#shopTable tbody');
                 shopTableBody.innerHTML = '';
@@ -241,17 +273,42 @@
                     shopTableBody.appendChild(row);
                 });
 
-                // Update variety table
+                // Update variety table with cost breakdown
                 const varietyTableBody = document.querySelector('#varietyTable tbody');
                 varietyTableBody.innerHTML = '';
-                data.variety_data.labels.forEach((label, index) => {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td>${label}</td>
-                        <td>₹${data.variety_data.values[index].toFixed(2)}</td>
-                    `;
-                    varietyTableBody.appendChild(row);
-                });
+                
+                if (data.variety_breakdown && data.variety_breakdown.length > 0) {
+                    data.variety_breakdown.forEach((variety) => {
+                        const row = document.createElement('tr');
+                        const profitPercent = variety.profit_percentage || 0;
+                        const profitPercentClass = profitPercent < 0 ? 'text-danger' : 'text-success';
+                        row.innerHTML = `
+                            <td><strong>${variety.name}</strong></td>
+                            <td>${variety.quantity}</td>
+                            <td>${variety.brownies_count.toFixed(2)}</td>
+                            <td>₹${variety.cost_per_brownie.toFixed(2)}</td>
+                            <td>₹${variety.cost.toFixed(2)}</td>
+                            <td>₹${variety.sales.toFixed(2)}</td>
+                            <td class="${profitPercentClass}"><strong>${profitPercent.toFixed(2)}%</strong></td>
+                        `;
+                        varietyTableBody.appendChild(row);
+                    });
+                } else {
+                    // Fallback to old format if breakdown not available
+                    data.variety_data.labels.forEach((label, index) => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${label}</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>₹${data.variety_data.values[index].toFixed(2)}</td>
+                            <td>-</td>
+                        `;
+                        varietyTableBody.appendChild(row);
+                    });
+                }
             })
             .catch(error => {
                 console.error('Error:', error);
@@ -259,9 +316,92 @@
             });
     });
 
+    // Load profit by month chart
+    function loadProfitByMonthChart() {
+        fetch('/api/reports/profit-by-month')
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    console.error('Error loading profit by month:', data.error);
+                    return;
+                }
+
+                if (data.profit_by_month && data.profit_by_month.length > 0) {
+                    const labels = data.profit_by_month.map(item => item.month);
+                    const profits = data.profit_by_month.map(item => item.profit);
+                    
+                    // Use green for positive profit, red for negative
+                    const colors = profits.map(profit => 
+                        profit >= 0 ? 'rgba(75, 192, 192, 0.8)' : 'rgba(255, 99, 132, 0.8)'
+                    );
+                    
+                    // Destroy existing chart if it exists
+                    if (profitByMonthChart) {
+                        profitByMonthChart.destroy();
+                    }
+                    
+                    // Create bar chart with dynamic colors
+                    const ctx = document.getElementById('profitByMonthChart');
+                    if (ctx) {
+                        profitByMonthChart = new Chart(ctx, {
+                            type: 'bar',
+                            data: {
+                                labels: labels,
+                                datasets: [{
+                                    label: 'Profit',
+                                    data: profits,
+                                    backgroundColor: colors,
+                                    borderColor: colors.map(c => c.replace('0.8', '1')),
+                                    borderWidth: 2
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: true,
+                                plugins: {
+                                    legend: {
+                                        display: false
+                                    },
+                                    tooltip: {
+                                        callbacks: {
+                                            label: function(context) {
+                                                const value = context.parsed.y || 0;
+                                                const index = context.dataIndex;
+                                                const monthData = data.profit_by_month[index];
+                                                return [
+                                                    'Profit: ₹' + value.toFixed(2),
+                                                    'Sales: ₹' + monthData.sales.toFixed(2),
+                                                    'Cost: ₹' + monthData.cost.toFixed(2)
+                                                ];
+                                            }
+                                        }
+                                    }
+                                },
+                                scales: {
+                                    y: {
+                                        beginAtZero: false,
+                                        ticks: {
+                                            callback: function(value) {
+                                                return '₹' + value.toFixed(0);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error loading profit by month chart:', error);
+            });
+    }
+
     // Load report on page load
     document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('loadReport').click();
+        // Also load profit by month chart
+        loadProfitByMonthChart();
     });
 </script>
 {% endblock %}

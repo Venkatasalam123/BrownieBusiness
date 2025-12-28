@@ -246,6 +246,7 @@ class OrderQuery:
             delivery_date=o['delivery_date'],
             payment_status=o['payment_status'],
             paid_amount=o['paid_amount'],
+            courier_price=o.get('courier_price', 0),
             created_at=o['created_at']
         ) for o in orders_data]
         
@@ -351,6 +352,95 @@ class OrderFilterQuery:
         return self
 
 
+class IngredientPriceQuery:
+    """Query interface for IngredientPrice"""
+    
+    def __init__(self):
+        self._order_by_attrs = []
+        self._order_direction = 'asc'
+    
+    def order_by(self, *args):
+        for arg in args:
+            direction = 'asc'
+            if hasattr(arg, 'key'):
+                attr_name = arg.key
+                if hasattr(arg, 'is_descending'):
+                    direction = 'desc' if arg.is_descending else 'asc'
+            elif hasattr(arg, '__name__'):
+                attr_name = arg.__name__
+            elif isinstance(arg, str):
+                attr_name = arg
+            else:
+                attr_name = str(arg).split('.')[-1] if '.' in str(arg) else str(arg)
+            self._order_by_attrs.append((attr_name, direction))
+        return self
+    
+    def all(self):
+        gs = get_gs_db()
+        ingredients_data = gs.get_ingredient_prices()
+        results = [IngredientPrice(
+            id=i['id'],
+            name=i['name'],
+            price=i['price'],
+            unit=i['unit'],
+            package_size=i['package_size'],
+            package_unit=i['package_unit'],
+            updated_at=i['updated_at']
+        ) for i in ingredients_data]
+        
+        # Apply sorting
+        if self._order_by_attrs:
+            for attr_name, direction in reversed(self._order_by_attrs):
+                reverse = (direction == 'desc')
+                try:
+                    results.sort(key=lambda x: getattr(x, attr_name, ''), reverse=reverse)
+                except:
+                    pass
+        
+        return results
+    
+    def filter_by(self, **kwargs):
+        return IngredientPriceFilterQuery(kwargs)
+    
+    def get(self, id):
+        ingredients = self.all()
+        for i in ingredients:
+            if i.id == id:
+                return i
+        return None
+    
+    def get_or_404(self, id):
+        """Get ingredient price by ID or raise 404 error"""
+        from flask import abort
+        ingredient = self.get(id)
+        if ingredient is None:
+            abort(404)
+        return ingredient
+    
+    def first(self):
+        ingredients = self.all()
+        return ingredients[0] if ingredients else None
+
+
+class IngredientPriceFilterQuery:
+    """Filter query for IngredientPrice"""
+    
+    def __init__(self, filters):
+        self.filters = filters
+    
+    def first(self):
+        ingredients = IngredientPrice.query.all()
+        for ingredient in ingredients:
+            match = True
+            for key, value in self.filters.items():
+                if getattr(ingredient, key, None) != value:
+                    match = False
+                    break
+            if match:
+                return ingredient
+        return None
+
+
 # Now define model classes
 class Variety:
     """Variety model wrapper for Google Sheets"""
@@ -409,11 +499,12 @@ class Order:
     delivery_date = Column('delivery_date')
     payment_status = Column('payment_status')
     paid_amount = Column('paid_amount')
+    courier_price = Column('courier_price')
     created_at = Column('created_at')
     
     def __init__(self, id=None, variety_id=None, shop_id=None, quantity=None, 
                  price=None, delivery_date=None, payment_status='unpaid', 
-                 paid_amount=0, created_at=None):
+                 paid_amount=0, courier_price=0, created_at=None):
         self.id = id
         self.variety_id = variety_id
         self.shop_id = shop_id
@@ -422,6 +513,7 @@ class Order:
         self.delivery_date = delivery_date
         self.payment_status = payment_status
         self.paid_amount = paid_amount
+        self.courier_price = courier_price
         self.created_at = created_at
         self._variety = None
         self._shop = None
@@ -451,15 +543,72 @@ class Order:
             'delivery_date': self.delivery_date.isoformat() if self.delivery_date else None,
             'payment_status': self.payment_status,
             'paid_amount': float(self.paid_amount) if self.paid_amount else 0.0,
+            'courier_price': float(self.courier_price) if self.courier_price else 0.0,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'total': float(self.price * self.quantity) if self.price and self.quantity else 0.0
         }
+
+
+class IngredientPrice:
+    """IngredientPrice model wrapper for Google Sheets"""
+    
+    # Column descriptors for SQLAlchemy-like access
+    id = Column('id')
+    name = Column('name')
+    price = Column('price')
+    unit = Column('unit')
+    package_size = Column('package_size')
+    package_unit = Column('package_unit')
+    updated_at = Column('updated_at')
+    
+    def __init__(self, id=None, name=None, price=None, unit=None, 
+                 package_size=None, package_unit=None, updated_at=None):
+        self.id = id
+        self.name = name
+        self.price = price
+        self.unit = unit
+        self.package_size = package_size
+        self.package_unit = package_unit
+        self.updated_at = updated_at
+    
+    def __repr__(self):
+        return f'<IngredientPrice {self.name}>'
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'price': float(self.price) if self.price else 0.0,
+            'unit': self.unit,
+            'package_size': float(self.package_size) if self.package_size else 0.0,
+            'package_unit': self.package_unit
+        }
+    
+    def get_price_per_gram(self):
+        """Get price per gram for weight-based ingredients"""
+        if self.package_unit in ['g', 'kg']:
+            size_in_grams = float(self.package_size) * (1000 if self.package_unit == 'kg' else 1)
+            return float(self.price) / size_in_grams
+        return None
+    
+    def get_price_per_ml(self):
+        """Get price per ml for volume-based ingredients"""
+        if self.package_unit == 'ml':
+            return float(self.price) / float(self.package_size)
+        return None
+    
+    def get_price_per_piece(self):
+        """Get price per piece for count-based ingredients"""
+        if self.package_unit == 'pc':
+            return float(self.price) / float(self.package_size)
+        return None
 
 
 # Set query properties after all classes are defined
 Variety.query = QueryProperty(VarietyQuery)
 Shop.query = QueryProperty(ShopQuery)
 Order.query = QueryProperty(OrderQuery)
+IngredientPrice.query = QueryProperty(IngredientPriceQuery)
 
 
 # Database session mock for compatibility
@@ -475,7 +624,12 @@ class DBSession:
         elif isinstance(obj, Order):
             gs.add_order(
                 obj.variety_id, obj.shop_id, obj.quantity, obj.price,
-                obj.delivery_date, obj.payment_status, obj.paid_amount
+                obj.delivery_date, obj.payment_status, obj.paid_amount,
+                obj.courier_price if hasattr(obj, 'courier_price') and obj.courier_price else 0
+            )
+        elif isinstance(obj, IngredientPrice):
+            gs.add_ingredient_price(
+                obj.name, obj.price, obj.unit, obj.package_size, obj.package_unit
             )
     
     def delete(self, obj):
@@ -484,7 +638,7 @@ class DBSession:
             gs.delete_variety(obj.id)
         elif isinstance(obj, Shop):
             gs.delete_shop(obj.id)
-        # Orders deletion handled separately
+        # Orders and IngredientPrices deletion handled separately
     
     def commit(self):
         pass  # Google Sheets writes are immediate

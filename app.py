@@ -5,7 +5,7 @@ from config import USE_GOOGLE_SHEETS
 
 # Import appropriate models based on configuration
 if USE_GOOGLE_SHEETS:
-    from gs_models import db, Variety, Shop, Order, session as gs_session
+    from gs_models import db, Variety, Shop, Order, IngredientPrice, session as gs_session
     print("📊 Using Google Sheets as database")
     # Create a mock session object for compatibility
     class MockSession:
@@ -13,7 +13,7 @@ if USE_GOOGLE_SHEETS:
             return getattr(gs_session, name)
     db_session = MockSession()
 else:
-    from models import db, Variety, Shop, Order
+    from models import db, Variety, Shop, Order, IngredientPrice
     from sqlalchemy import func, extract, text
     print("💾 Using SQLite as database")
     db_session = db.session
@@ -33,11 +33,584 @@ if not USE_GOOGLE_SHEETS:
     # Initialize database
     with app.app_context():
         db.create_all()
+        # Initialize default ingredient prices if they don't exist
+        _initialize_default_ingredient_prices()
 else:
     db.init_app(app)
-    # Initialize Google Sheets
+    # Initialize Google Sheets (this will also initialize ingredient prices)
     with app.app_context():
         db.create_all()
+
+
+def _initialize_default_ingredient_prices():
+    """Initialize default ingredient prices if they don't exist"""
+    if IngredientPrice is None:
+        return
+    
+    default_prices = [
+        {'name': 'Dark Compound', 'price': 165, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'Butter', 'price': 100, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'Egg', 'price': 7, 'unit': '1pc', 'package_size': 1, 'package_unit': 'pc'},
+        {'name': 'White Sugar', 'price': 50, 'unit': '1kg', 'package_size': 1, 'package_unit': 'kg'},
+        {'name': 'Brown Sugar', 'price': 80, 'unit': '1kg', 'package_size': 1, 'package_unit': 'kg'},
+        {'name': 'Vanilla Essence', 'price': 50, 'unit': '100ml', 'package_size': 100, 'package_unit': 'ml'},
+        {'name': 'Maida/Ragi', 'price': 50, 'unit': '1kg', 'package_size': 1, 'package_unit': 'kg'},
+        {'name': 'Mango Compound', 'price': 205, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'Pista Compound', 'price': 205, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'Pista Nuts', 'price': 445, 'unit': '250g', 'package_size': 250, 'package_unit': 'g'},
+        {'name': 'Milk Compound', 'price': 190, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'White Compound', 'price': 205, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'Oven Charges', 'price': 20, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
+        {'name': 'Miscellaneous', 'price': 10, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
+        {'name': 'Packing', 'price': 28.8, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
+        {'name': 'Transportation', 'price': 20, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
+    ]
+    
+    for ing_data in default_prices:
+        existing = IngredientPrice.query.filter_by(name=ing_data['name']).first()
+        if not existing:
+            ingredient = IngredientPrice(
+                name=ing_data['name'],
+                price=Decimal(str(ing_data['price'])),
+                unit=ing_data['unit'],
+                package_size=Decimal(str(ing_data['package_size'])),
+                package_unit=ing_data['package_unit']
+            )
+            db_session.add(ingredient)
+        elif ing_data['name'] == 'Pista Nuts' and existing.package_size == 25:
+            # Update existing Pista Nuts if it still has old value (25g)
+            existing.price = Decimal(str(ing_data['price']))
+            existing.unit = ing_data['unit']
+            existing.package_size = Decimal(str(ing_data['package_size']))
+            existing.package_unit = ing_data['package_unit']
+            existing.updated_at = datetime.utcnow()
+    
+    db_session.commit()
+
+
+def get_ingredient_price(name):
+    """Get ingredient price object by name"""
+    if IngredientPrice is None:
+        return None
+    return IngredientPrice.query.filter_by(name=name).first()
+
+
+def calculate_cost_per_brownie(variety_name):
+    """Calculate the cost per brownie based on variety and ingredient prices"""
+    if IngredientPrice is None:
+        return None
+    
+    # Ingredients needed for 16 brownies
+    # Base ingredients (for all varieties)
+    butter_g = 235
+    egg_count = 4
+    white_sugar_g = 52
+    brown_sugar_g = 52
+    vanilla_essence_ml = 4
+    maida_ragi_g = 125
+    
+    # Get base ingredient prices
+    butter = get_ingredient_price('Butter')
+    egg = get_ingredient_price('Egg')
+    white_sugar = get_ingredient_price('White Sugar')
+    brown_sugar = get_ingredient_price('Brown Sugar')
+    vanilla = get_ingredient_price('Vanilla Essence')
+    maida = get_ingredient_price('Maida/Ragi')
+    
+    total_cost = 0
+    
+    # Calculate butter cost
+    if butter:
+        price_per_g = butter.get_price_per_gram()
+        if price_per_g:
+            total_cost += butter_g * price_per_g
+    
+    # Calculate egg cost
+    if egg:
+        price_per_piece = egg.get_price_per_piece()
+        if price_per_piece:
+            total_cost += egg_count * price_per_piece
+    
+    # Calculate white sugar cost
+    if white_sugar:
+        price_per_g = white_sugar.get_price_per_gram()
+        if price_per_g:
+            total_cost += white_sugar_g * price_per_g
+    
+    # Calculate brown sugar cost
+    if brown_sugar:
+        price_per_g = brown_sugar.get_price_per_gram()
+        if price_per_g:
+            total_cost += brown_sugar_g * price_per_g
+    
+    # Calculate vanilla essence cost
+    if vanilla:
+        price_per_ml = vanilla.get_price_per_ml()
+        if price_per_ml:
+            total_cost += vanilla_essence_ml * price_per_ml
+    
+    # Calculate maida/ragi cost
+    if maida:
+        price_per_g = maida.get_price_per_gram()
+        if price_per_g:
+            total_cost += maida_ragi_g * price_per_g
+    
+    # Handle variety-specific ingredients
+    variety_lower = variety_name.lower()
+    compound_g = 400
+    
+    if 'mango' in variety_lower:
+        mango_compound = get_ingredient_price('Mango Compound')
+        if mango_compound:
+            price_per_g = mango_compound.get_price_per_gram()
+            if price_per_g:
+                total_cost += compound_g * price_per_g
+    elif 'pista' in variety_lower:
+        pista_compound = get_ingredient_price('Pista Compound')
+        pista_nuts = get_ingredient_price('Pista Nuts')
+        if pista_compound:
+            price_per_g = pista_compound.get_price_per_gram()
+            if price_per_g:
+                total_cost += compound_g * price_per_g
+        if pista_nuts:
+            price_per_g = pista_nuts.get_price_per_gram()
+            if price_per_g:
+                total_cost += 16 * price_per_g  # 16g pista nuts for 16 brownies
+    elif 'ragi' in variety_lower:
+        # Ragi brownie: uses dark compound + milk compound + white compound
+        dark_compound = get_ingredient_price('Dark Compound')
+        milk_compound = get_ingredient_price('Milk Compound')
+        white_compound = get_ingredient_price('White Compound')
+        if dark_compound:
+            price_per_g = dark_compound.get_price_per_gram()
+            if price_per_g:
+                total_cost += compound_g * price_per_g
+        if milk_compound:
+            price_per_g = milk_compound.get_price_per_gram()
+            if price_per_g:
+                total_cost += 25 * price_per_g  # 25g milk compound for 16 brownies
+        if white_compound:
+            price_per_g = white_compound.get_price_per_gram()
+            if price_per_g:
+                total_cost += 25 * price_per_g  # 25g white compound for 16 brownies
+    else:
+        # Default: dark compound
+        dark_compound = get_ingredient_price('Dark Compound')
+        if dark_compound:
+            price_per_g = dark_compound.get_price_per_gram()
+            if price_per_g:
+                total_cost += compound_g * price_per_g
+    
+    # Add fixed costs (oven charges and miscellaneous) for 16 brownies
+    oven_charges = get_ingredient_price('Oven Charges')
+    if oven_charges:
+        price_per_batch = oven_charges.get_price_per_piece()
+        if price_per_batch:
+            total_cost += price_per_batch  # Already for 16 brownies batch
+    
+    miscellaneous = get_ingredient_price('Miscellaneous')
+    if miscellaneous:
+        price_per_batch = miscellaneous.get_price_per_piece()
+        if price_per_batch:
+            total_cost += price_per_batch  # Already for 16 brownies batch
+    else:
+        # Fallback: Add miscellaneous cost directly if not in database
+        total_cost += 10.0  # ₹10 for 16 brownies
+    
+    # Add packing cost (₹1.8 per brownie × 16 = ₹28.8 for 16 brownies)
+    packing = get_ingredient_price('Packing')
+    if packing:
+        price_per_batch = packing.get_price_per_piece()
+        if price_per_batch:
+            total_cost += price_per_batch  # Already for 16 brownies batch
+    else:
+        # Fallback: Add packing cost directly if not in database
+        total_cost += 28.8  # ₹1.8 per brownie × 16
+    
+    # Add transportation cost (₹20 for 16 brownies)
+    transportation = get_ingredient_price('Transportation')
+    if transportation:
+        price_per_batch = transportation.get_price_per_piece()
+        if price_per_batch:
+            total_cost += price_per_batch  # Already for 16 brownies batch
+    else:
+        # Fallback: Add transportation cost directly if not in database
+        total_cost += 20.0  # ₹20 for 16 brownies
+    
+    # Cost for 16 brownies, so divide by 16 to get cost per brownie
+    cost_per_brownie = total_cost / 16.0
+    return cost_per_brownie
+
+
+def get_cost_breakdown(variety_name):
+    """Get detailed cost breakdown for a variety showing how cost per brownie is calculated"""
+    if IngredientPrice is None:
+        return None
+    
+    breakdown = {
+        'variety': variety_name,
+        'ingredients': [],
+        'total_cost_16_brownies': 0,
+        'cost_per_brownie': 0
+    }
+    
+    # Ingredients needed for 16 brownies
+    butter_g = 235
+    egg_count = 4
+    white_sugar_g = 52
+    brown_sugar_g = 52
+    vanilla_essence_ml = 4
+    maida_ragi_g = 125
+    compound_g = 400
+    
+    # Base ingredients
+    butter = get_ingredient_price('Butter')
+    if butter:
+        price_per_g = butter.get_price_per_gram()
+        if price_per_g:
+            cost = butter_g * price_per_g
+            breakdown['ingredients'].append({
+                'name': 'Butter',
+                'quantity': f'{butter_g}g',
+                'package_price': float(butter.price),
+                'package_size': f'{butter.unit}',
+                'price_per_unit': price_per_g,
+                'cost': cost
+            })
+            breakdown['total_cost_16_brownies'] += cost
+    
+    egg = get_ingredient_price('Egg')
+    if egg:
+        price_per_piece = egg.get_price_per_piece()
+        if price_per_piece:
+            cost = egg_count * price_per_piece
+            breakdown['ingredients'].append({
+                'name': 'Egg',
+                'quantity': f'{egg_count} piece',
+                'package_price': float(egg.price),
+                'package_size': f'{egg.unit}',
+                'price_per_unit': price_per_piece,
+                'cost': cost
+            })
+            breakdown['total_cost_16_brownies'] += cost
+    
+    white_sugar = get_ingredient_price('White Sugar')
+    if white_sugar:
+        price_per_g = white_sugar.get_price_per_gram()
+        if price_per_g:
+            cost = white_sugar_g * price_per_g
+            breakdown['ingredients'].append({
+                'name': 'White Sugar',
+                'quantity': f'{white_sugar_g}g',
+                'package_price': float(white_sugar.price),
+                'package_size': f'{white_sugar.unit}',
+                'price_per_unit': price_per_g,
+                'cost': cost
+            })
+            breakdown['total_cost_16_brownies'] += cost
+    
+    brown_sugar = get_ingredient_price('Brown Sugar')
+    if brown_sugar:
+        price_per_g = brown_sugar.get_price_per_gram()
+        if price_per_g:
+            cost = brown_sugar_g * price_per_g
+            breakdown['ingredients'].append({
+                'name': 'Brown Sugar',
+                'quantity': f'{brown_sugar_g}g',
+                'package_price': float(brown_sugar.price),
+                'package_size': f'{brown_sugar.unit}',
+                'price_per_unit': price_per_g,
+                'cost': cost
+            })
+            breakdown['total_cost_16_brownies'] += cost
+    
+    vanilla = get_ingredient_price('Vanilla Essence')
+    if vanilla:
+        price_per_ml = vanilla.get_price_per_ml()
+        if price_per_ml:
+            cost = vanilla_essence_ml * price_per_ml
+            breakdown['ingredients'].append({
+                'name': 'Vanilla Essence',
+                'quantity': f'{vanilla_essence_ml}ml',
+                'package_price': float(vanilla.price),
+                'package_size': f'{vanilla.unit}',
+                'price_per_unit': price_per_ml,
+                'cost': cost
+            })
+            breakdown['total_cost_16_brownies'] += cost
+    
+    maida = get_ingredient_price('Maida/Ragi')
+    if maida:
+        price_per_g = maida.get_price_per_gram()
+        if price_per_g:
+            cost = maida_ragi_g * price_per_g
+            breakdown['ingredients'].append({
+                'name': 'Maida/Ragi',
+                'quantity': f'{maida_ragi_g}g',
+                'package_price': float(maida.price),
+                'package_size': f'{maida.unit}',
+                'price_per_unit': price_per_g,
+                'cost': cost
+            })
+            breakdown['total_cost_16_brownies'] += cost
+    
+    # Variety-specific compound
+    variety_lower = variety_name.lower()
+    if 'mango' in variety_lower:
+        compound = get_ingredient_price('Mango Compound')
+        compound_name = 'Mango Compound'
+    elif 'pista' in variety_lower:
+        compound = get_ingredient_price('Pista Compound')
+        compound_name = 'Pista Compound'
+    elif 'ragi' in variety_lower:
+        # Ragi brownie uses dark compound
+        compound = get_ingredient_price('Dark Compound')
+        compound_name = 'Dark Compound'
+    else:
+        compound = get_ingredient_price('Dark Compound')
+        compound_name = 'Dark Compound'
+    
+    if compound:
+        price_per_g = compound.get_price_per_gram()
+        if price_per_g:
+            cost = compound_g * price_per_g
+            breakdown['ingredients'].append({
+                'name': compound_name,
+                'quantity': f'{compound_g}g',
+                'package_price': float(compound.price),
+                'package_size': f'{compound.unit}',
+                'price_per_unit': price_per_g,
+                'cost': cost
+            })
+            breakdown['total_cost_16_brownies'] += cost
+    
+    # Pista nuts (only for Pista Brownie)
+    if 'pista' in variety_lower:
+        pista_nuts = get_ingredient_price('Pista Nuts')
+        if pista_nuts:
+            price_per_g = pista_nuts.get_price_per_gram()
+            if price_per_g:
+                cost = 16 * price_per_g
+                breakdown['ingredients'].append({
+                    'name': 'Pista Nuts',
+                    'quantity': '16g',
+                    'package_price': float(pista_nuts.price),
+                    'package_size': f'{pista_nuts.unit}',
+                    'price_per_unit': price_per_g,
+                    'cost': cost
+                })
+                breakdown['total_cost_16_brownies'] += cost
+    
+    # Milk compound and white compound (only for Ragi Brownie)
+    if 'ragi' in variety_lower:
+        milk_compound = get_ingredient_price('Milk Compound')
+        if milk_compound:
+            price_per_g = milk_compound.get_price_per_gram()
+            if price_per_g:
+                cost = 25 * price_per_g
+                breakdown['ingredients'].append({
+                    'name': 'Milk Compound',
+                    'quantity': '25g',
+                    'package_price': float(milk_compound.price),
+                    'package_size': f'{milk_compound.unit}',
+                    'price_per_unit': price_per_g,
+                    'cost': cost
+                })
+                breakdown['total_cost_16_brownies'] += cost
+        
+        white_compound = get_ingredient_price('White Compound')
+        if white_compound:
+            price_per_g = white_compound.get_price_per_gram()
+            if price_per_g:
+                cost = 25 * price_per_g
+                breakdown['ingredients'].append({
+                    'name': 'White Compound',
+                    'quantity': '25g',
+                    'package_price': float(white_compound.price),
+                    'package_size': f'{white_compound.unit}',
+                    'price_per_unit': price_per_g,
+                    'cost': cost
+                })
+                breakdown['total_cost_16_brownies'] += cost
+    
+    # Fixed costs
+    oven_charges = get_ingredient_price('Oven Charges')
+    if oven_charges:
+        price_per_batch = oven_charges.get_price_per_piece()
+        if price_per_batch:
+            breakdown['ingredients'].append({
+                'name': 'Oven Charges',
+                'quantity': '16 brownies',
+                'package_price': float(oven_charges.price),
+                'package_size': f'{oven_charges.unit}',
+                'price_per_unit': price_per_batch,
+                'cost': price_per_batch
+            })
+            breakdown['total_cost_16_brownies'] += price_per_batch
+    
+    miscellaneous = get_ingredient_price('Miscellaneous')
+    if miscellaneous:
+        price_per_batch = miscellaneous.get_price_per_piece()
+        if price_per_batch:
+            breakdown['ingredients'].append({
+                'name': 'Miscellaneous',
+                'quantity': '16 brownies',
+                'package_price': float(miscellaneous.price),
+                'package_size': f'{miscellaneous.unit}',
+                'price_per_unit': price_per_batch,
+                'cost': price_per_batch
+            })
+            breakdown['total_cost_16_brownies'] += price_per_batch
+    
+    # Add packing cost (₹1.8 per brownie × 16 = ₹28.8 for 16 brownies)
+    packing = get_ingredient_price('Packing')
+    packing_cost = 28.8  # Default value
+    if packing:
+        price_per_batch = packing.get_price_per_piece()
+        if price_per_batch:
+            packing_cost = price_per_batch
+            breakdown['ingredients'].append({
+                'name': 'Packing',
+                'quantity': '16 brownies (₹1.8 per brownie)',
+                'package_price': float(packing.price),
+                'package_size': f'{packing.unit}',
+                'price_per_unit': price_per_batch,
+                'cost': price_per_batch
+            })
+    else:
+        # Fallback: Add packing cost directly if not in database
+        breakdown['ingredients'].append({
+            'name': 'Packing',
+            'quantity': '16 brownies (₹1.8 per brownie)',
+            'package_price': 28.8,
+            'package_size': '16 brownies',
+            'price_per_unit': 28.8,
+            'cost': 28.8
+        })
+    breakdown['total_cost_16_brownies'] += packing_cost
+    
+    # Add transportation cost (₹20 for 16 brownies)
+    transportation = get_ingredient_price('Transportation')
+    transportation_cost = 20.0  # Default value
+    if transportation:
+        price_per_batch = transportation.get_price_per_piece()
+        if price_per_batch:
+            transportation_cost = price_per_batch
+            breakdown['ingredients'].append({
+                'name': 'Transportation',
+                'quantity': '16 brownies',
+                'package_price': float(transportation.price),
+                'package_size': f'{transportation.unit}',
+                'price_per_unit': price_per_batch,
+                'cost': price_per_batch
+            })
+    else:
+        # Fallback: Add transportation cost directly if not in database
+        breakdown['ingredients'].append({
+            'name': 'Transportation',
+            'quantity': '16 brownies',
+            'package_price': 20.0,
+            'package_size': '16 brownies',
+            'price_per_unit': 20.0,
+            'cost': 20.0
+        })
+    breakdown['total_cost_16_brownies'] += transportation_cost
+    
+    breakdown['cost_per_brownie'] = breakdown['total_cost_16_brownies'] / 16.0
+    
+    return breakdown
+
+
+def calculate_brownies_from_price(price):
+    """
+    Calculate number of brownies based on price per unit.
+    
+    Rules:
+    1. If price < 15: 0.5 brownie
+    2. If price 25-35: 1 brownie
+    3. If price 40-55: 1.33 brownie
+    4. If price >= 160: kg-based calculation
+       a. 160-190: 4 brownies
+       b. 300-380: 8 brownies
+       c. 400-490: 12 brownies
+       d. 500-620: 16 brownies
+       e. > 620: divide by 500, multiply by 16
+    5. Otherwise (15-25, 35-40, 55-160): 1 brownie (default)
+    """
+    price_float = float(price)
+    
+    # Rule 1: Price < 15 → 0.5 brownie
+    if price_float < 15:
+        return 0.5
+    
+    # Rule 4: Price >= 160 → kg-based calculation
+    if price_float >= 160:
+        # Rule 4e: If price > 620, divide by 500 and apply 16 brownies per 500
+        if price_float > 620:
+            multiplier = price_float / 500.0
+            return multiplier * 16.0
+        # Rule 4d: 500-620 → 16 brownies
+        elif 500 <= price_float <= 620:
+            return 16.0
+        # Rule 4c: 400-490 → 12 brownies
+        elif 400 <= price_float <= 490:
+            return 12.0
+        # Rule 4b: 300-380 → 8 brownies
+        elif 300 <= price_float <= 380:
+            return 8.0
+        # Rule 4a: 160-190 → 4 brownies
+        elif 160 <= price_float <= 190:
+            return 4.0
+        # Default for kg-based (190-300): treat as 4 brownies (conservative)
+        else:
+            return 4.0
+    
+    # Rule 3: Price 40-55 → 1.33 brownie
+    if 40 <= price_float <= 55:
+        return 1.33
+    
+    # Rule 2: Price 25-35 → 1 brownie
+    if 25 <= price_float <= 35:
+        return 1.0
+    
+    # Default: 1 brownie (for 15-25, 35-40, 55-160)
+    return 1.0
+
+
+def calculate_total_cost_and_profit(orders):
+    """Calculate total ingredient cost and profit for a list of orders"""
+    if IngredientPrice is None:
+        # Fallback to 30% margin if ingredient prices not available
+        total_sales = sum(float(order.price * order.quantity) for order in orders)
+        return total_sales * 0.30, total_sales * 0.30
+    
+    total_cost = 0
+    total_sales = 0
+    
+    for order in orders:
+        variety = order.variety
+        variety_name = variety.name if variety else 'Classic Brownie'
+        
+        # Calculate cost per brownie for this variety
+        cost_per_brownie = calculate_cost_per_brownie(variety_name)
+        
+        if cost_per_brownie is None:
+            continue
+        
+        # Determine brownie count based on price
+        order_price = float(order.price)
+        order_quantity = float(order.quantity)
+        
+        brownies_per_unit = calculate_brownies_from_price(order_price)
+        brownies_count = brownies_per_unit * order_quantity
+        total_cost += brownies_count * cost_per_brownie
+        total_sales += float(order.price * order.quantity)
+    
+    # Subtract total courier costs from profit
+    total_courier = sum(float(order.courier_price) if order.courier_price else 0.0 for order in orders)
+    
+    profit = total_sales - total_cost - total_courier
+    return profit, total_cost
 
 
 @app.route('/')
@@ -59,6 +632,7 @@ def add_order():
         delivery_date_str = request.form.get('delivery_date')
         payment_status = request.form.get('payment_status', 'unpaid')
         paid_amount = request.form.get('paid_amount', type=float) or 0
+        courier_price = request.form.get('courier_price', type=float) or 0
         
         # Validation
         if not variety_id or not shop_id or not quantity or not price or not delivery_date_str:
@@ -103,7 +677,8 @@ def add_order():
             price=Decimal(str(price)),
             delivery_date=delivery_date,
             payment_status=payment_status,
-            paid_amount=Decimal(str(paid_amount))
+            paid_amount=Decimal(str(paid_amount)),
+            courier_price=Decimal(str(courier_price))
         )
         
         db_session.add(order)
@@ -402,6 +977,57 @@ def orders():
     return render_template('orders.html', months_grouped=months_grouped, total_sales=total_sales, total_pending=total_pending, total_orders=len(all_orders), all_shops=all_shops, selected_shop=selected_shop, shop_id_filter=shop_id_filter)
 
 
+@app.route('/ingredients', methods=['GET', 'POST'])
+def ingredients():
+    """Ingredients cost management page"""
+    if request.method == 'POST':
+        try:
+            # Update all ingredient prices
+            ingredients_list = IngredientPrice.query.all()
+            for ingredient in ingredients_list:
+                price_key = f'price_{ingredient.id}'
+                new_price = request.form.get(price_key, type=float)
+                if new_price is not None and new_price >= 0:
+                    if USE_GOOGLE_SHEETS:
+                        # For Google Sheets, update via API
+                        from google_sheets import get_gs_db
+                        gs = get_gs_db()
+                        gs.update_ingredient_price(
+                            ingredient.id,
+                            ingredient.name,
+                            Decimal(str(new_price)),
+                            ingredient.unit,
+                            ingredient.package_size,
+                            ingredient.package_unit
+                        )
+                    else:
+                        # For SQLite, update the object and commit
+                        ingredient.price = Decimal(str(new_price))
+                        ingredient.updated_at = datetime.utcnow()
+            
+            if not USE_GOOGLE_SHEETS:
+                db_session.commit()
+            flash('Ingredient prices updated successfully!', 'success')
+            return redirect(url_for('ingredients'))
+        except Exception as e:
+            if not USE_GOOGLE_SHEETS:
+                db_session.rollback()
+            flash(f'Error updating ingredient prices: {str(e)}', 'error')
+    
+    # GET request - show current prices
+    ingredients_list = IngredientPrice.query.order_by(IngredientPrice.name).all()
+    
+    # Get cost breakdown for all varieties
+    varieties = Variety.query.order_by(Variety.name).all()
+    variety_breakdowns = {}
+    for variety in varieties:
+        breakdown = get_cost_breakdown(variety.name)
+        if breakdown:
+            variety_breakdowns[variety.name] = breakdown
+    
+    return render_template('ingredients.html', ingredients=ingredients_list, variety_breakdowns=variety_breakdowns)
+
+
 @app.route('/cost-breakdown', methods=['GET', 'POST'])
 def cost_breakdown():
     """Cost breakdown page for brownie production costs"""
@@ -456,12 +1082,7 @@ def cost_breakdown():
                 order_price = float(order.price)
                 order_quantity = float(order.quantity)
                 # Determine brownie count based on price
-                if order_price >= 15:
-                    # Full brownie (25, 28, 32, 35, etc.)
-                    brownies_per_unit = 1.0
-                else:
-                    # Half brownie (price < 15, like 12.5)
-                    brownies_per_unit = 0.5
+                brownies_per_unit = calculate_brownies_from_price(order_price)
                 brownies_for_order = brownies_per_unit * order_quantity
                 total_brownies += brownies_for_order
             
@@ -574,7 +1195,8 @@ def api_overall_report():
         total_sales = sum(float(order.price * order.quantity) for order in orders)
         total_paid = sum(float(order.paid_amount) if order.paid_amount else 0 for order in orders)
         total_pending = total_sales - total_paid
-        margin = total_sales * 0.30
+        margin, total_cost = calculate_total_cost_and_profit(orders)
+        profit_percentage = (margin / total_sales * 100) if total_sales > 0 else 0
         
         # Shop-wise breakdown with pending amounts (sorted by total descending)
         if USE_GOOGLE_SHEETS:
@@ -631,6 +1253,57 @@ def api_overall_report():
             'values': [float(v[1]) for v in variety_totals]
         }
         
+        # Variety-wise cost breakdown
+        variety_cost_breakdown = {}
+        for order in orders:
+            variety = order.variety
+            variety_name = variety.name if variety else 'Unknown'
+            
+            if variety_name not in variety_cost_breakdown:
+                variety_cost_breakdown[variety_name] = {
+                    'sales': 0,
+                    'cost': 0,
+                    'quantity': 0,
+                    'brownies_count': 0
+                }
+            
+            # Calculate cost per brownie for this variety
+            cost_per_brownie = calculate_cost_per_brownie(variety_name)
+            
+            if cost_per_brownie is not None:
+                # Determine brownie count based on price
+                order_price = float(order.price)
+                order_quantity = float(order.quantity)
+                
+                brownies_per_unit = calculate_brownies_from_price(order_price)
+                brownies_count = brownies_per_unit * order_quantity
+                order_cost = brownies_count * cost_per_brownie
+                order_sales = float(order.price * order.quantity)
+                
+                variety_cost_breakdown[variety_name]['sales'] += order_sales
+                variety_cost_breakdown[variety_name]['cost'] += order_cost
+                variety_cost_breakdown[variety_name]['quantity'] += order_quantity
+                variety_cost_breakdown[variety_name]['brownies_count'] += brownies_count
+        
+        # Format variety breakdown with costs
+        variety_breakdown = []
+        for variety_name, data in variety_cost_breakdown.items():
+            profit = data['sales'] - data['cost']
+            profit_pct = (profit / data['sales'] * 100) if data['sales'] > 0 else 0
+            variety_breakdown.append({
+                'name': variety_name,
+                'sales': round(data['sales'], 2),
+                'cost': round(data['cost'], 2),
+                'profit': round(profit, 2),
+                'profit_percentage': round(profit_pct, 2),
+                'quantity': data['quantity'],
+                'brownies_count': round(data['brownies_count'], 2),
+                'cost_per_brownie': round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
+            })
+        
+        # Sort by sales descending
+        variety_breakdown.sort(key=lambda x: x['sales'], reverse=True)
+        
         # Summary statistics
         total_orders = len(orders)
         avg_order_value = total_sales / total_orders if total_orders > 0 else 0
@@ -640,10 +1313,69 @@ def api_overall_report():
             'total_paid': round(total_paid, 2),
             'total_pending': round(total_pending, 2),
             'margin': round(margin, 2),
+            'profit_percentage': round(profit_percentage, 2),
+            'total_cost': round(total_cost, 2),
             'shop_data': shop_data,
             'variety_data': variety_data,
+            'variety_breakdown': variety_breakdown,
             'total_orders': total_orders,
             'avg_order_value': round(avg_order_value, 2)
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/reports/profit-by-month')
+def api_profit_by_month():
+    """JSON API endpoint for profit by month data"""
+    try:
+        # Get all orders
+        if USE_GOOGLE_SHEETS:
+            all_orders = Order.query.all()
+        else:
+            all_orders = Order.query.all()
+        
+        # Group orders by month
+        monthly_data = {}
+        
+        for order in all_orders:
+            if not order.delivery_date:
+                continue
+                
+            month_key = order.delivery_date.strftime('%Y-%m')
+            month_label = order.delivery_date.strftime('%B %Y')
+            
+            if month_key not in monthly_data:
+                monthly_data[month_key] = {
+                    'label': month_label,
+                    'orders': [],
+                    'sales': 0,
+                    'cost': 0
+                }
+            
+            monthly_data[month_key]['orders'].append(order)
+            monthly_data[month_key]['sales'] += float(order.price * order.quantity)
+        
+        # Calculate profit for each month
+        profit_by_month = []
+        for month_key in sorted(monthly_data.keys()):
+            month_info = monthly_data[month_key]
+            orders = month_info['orders']
+            
+            # Calculate total cost and profit
+            margin, total_cost = calculate_total_cost_and_profit(orders)
+            
+            profit_by_month.append({
+                'month': month_info['label'],
+                'month_key': month_key,
+                'profit': round(margin, 2),
+                'sales': round(month_info['sales'], 2),
+                'cost': round(total_cost, 2)
+            })
+        
+        return jsonify({
+            'profit_by_month': profit_by_month
         })
     
     except Exception as e:
@@ -671,7 +1403,8 @@ def api_monthly_report(year, month):
         total_sales = sum(float(order.price * order.quantity) for order in orders)
         total_paid = sum(float(order.paid_amount) if order.paid_amount else 0 for order in orders)
         total_pending = total_sales - total_paid
-        margin = total_sales * 0.30
+        margin, total_cost = calculate_total_cost_and_profit(orders)
+        profit_percentage = (margin / total_sales * 100) if total_sales > 0 else 0
         
         # Shop-wise breakdown with pending amounts (sorted by total descending)
         if USE_GOOGLE_SHEETS:
@@ -734,6 +1467,57 @@ def api_monthly_report(year, month):
             'values': [float(v[1]) for v in variety_totals]
         }
         
+        # Variety-wise cost breakdown
+        variety_cost_breakdown = {}
+        for order in orders:
+            variety = order.variety
+            variety_name = variety.name if variety else 'Unknown'
+            
+            if variety_name not in variety_cost_breakdown:
+                variety_cost_breakdown[variety_name] = {
+                    'sales': 0,
+                    'cost': 0,
+                    'quantity': 0,
+                    'brownies_count': 0
+                }
+            
+            # Calculate cost per brownie for this variety
+            cost_per_brownie = calculate_cost_per_brownie(variety_name)
+            
+            if cost_per_brownie is not None:
+                # Determine brownie count based on price
+                order_price = float(order.price)
+                order_quantity = float(order.quantity)
+                
+                brownies_per_unit = calculate_brownies_from_price(order_price)
+                brownies_count = brownies_per_unit * order_quantity
+                order_cost = brownies_count * cost_per_brownie
+                order_sales = float(order.price * order.quantity)
+                
+                variety_cost_breakdown[variety_name]['sales'] += order_sales
+                variety_cost_breakdown[variety_name]['cost'] += order_cost
+                variety_cost_breakdown[variety_name]['quantity'] += order_quantity
+                variety_cost_breakdown[variety_name]['brownies_count'] += brownies_count
+        
+        # Format variety breakdown with costs
+        variety_breakdown = []
+        for variety_name, data in variety_cost_breakdown.items():
+            profit = data['sales'] - data['cost']
+            profit_pct = (profit / data['sales'] * 100) if data['sales'] > 0 else 0
+            variety_breakdown.append({
+                'name': variety_name,
+                'sales': round(data['sales'], 2),
+                'cost': round(data['cost'], 2),
+                'profit': round(profit, 2),
+                'profit_percentage': round(profit_pct, 2),
+                'quantity': data['quantity'],
+                'brownies_count': round(data['brownies_count'], 2),
+                'cost_per_brownie': round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
+            })
+        
+        # Sort by sales descending
+        variety_breakdown.sort(key=lambda x: x['sales'], reverse=True)
+        
         # Summary statistics
         total_orders = len(orders)
         avg_order_value = total_sales / total_orders if total_orders > 0 else 0
@@ -743,8 +1527,11 @@ def api_monthly_report(year, month):
             'total_paid': round(total_paid, 2),
             'total_pending': round(total_pending, 2),
             'margin': round(margin, 2),
+            'profit_percentage': round(profit_percentage, 2),
+            'total_cost': round(total_cost, 2),
             'shop_data': shop_data,
             'variety_data': variety_data,
+            'variety_breakdown': variety_breakdown,
             'total_orders': total_orders,
             'avg_order_value': round(avg_order_value, 2)
         })
@@ -796,6 +1583,7 @@ def edit_order(id):
             delivery_date_str = request.form.get('delivery_date')
             payment_status = request.form.get('payment_status', default='unpaid')
             paid_amount = request.form.get('paid_amount', type=float, default=0.00)
+            courier_price = request.form.get('courier_price', type=float, default=0.00)
             
             # Validation
             if not variety_id or not shop_id or not quantity or not price or not delivery_date_str:
@@ -830,7 +1618,8 @@ def edit_order(id):
                     Decimal(str(price)),
                     delivery_date,
                     payment_status,
-                    Decimal(str(paid_amount))
+                    Decimal(str(paid_amount)),
+                    Decimal(str(courier_price))
                 )
                 total = float(Decimal(str(price)) * quantity)
             else:
@@ -842,6 +1631,7 @@ def edit_order(id):
                 order.delivery_date = delivery_date
                 order.payment_status = payment_status
                 order.paid_amount = Decimal(str(paid_amount))
+                order.courier_price = Decimal(str(courier_price))
                 db_session.commit()
                 total = float(order.price * order.quantity)
             

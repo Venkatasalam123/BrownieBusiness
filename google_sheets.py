@@ -30,6 +30,7 @@ SPREADSHEET_ID = _raw_id if _raw_id else ''
 SHEET_VARIETIES = 'Varieties'
 SHEET_SHOPS = 'Shops'
 SHEET_ORDERS = 'Orders'
+SHEET_INGREDIENT_PRICES = 'IngredientPrices'
 
 class GoogleSheetsDB:
     """Google Sheets database interface"""
@@ -191,6 +192,13 @@ class GoogleSheetsDB:
                     
                     return values
                 except (HttpError, ConnectionError, OSError, Exception) as error:
+                    # Handle sheet not found (404) - return empty list
+                    if isinstance(error, HttpError) and error.resp.status == 400:
+                        error_str = str(error)
+                        if 'Unable to parse range' in error_str or 'does not exist' in error_str.lower():
+                            # Sheet doesn't exist, return empty list
+                            return []
+                    
                     # Handle rate limiting
                     if isinstance(error, HttpError) and error.resp.status == 429:
                         if attempt < retry_count - 1:
@@ -380,6 +388,47 @@ class GoogleSheetsDB:
             print(f"Error updating row in sheet {sheet_name}: {error}")
             raise
     
+    def _sheet_exists(self, sheet_name):
+        """Check if a sheet exists in the spreadsheet"""
+        try:
+            sheet_metadata = self.service.spreadsheets().get(
+                spreadsheetId=self.spreadsheet_id
+            ).execute()
+            
+            for sheet in sheet_metadata.get('sheets', []):
+                if sheet['properties']['title'] == sheet_name:
+                    return True
+            return False
+        except Exception as error:
+            print(f"Error checking if sheet {sheet_name} exists: {error}")
+            return False
+    
+    def _create_sheet(self, sheet_name):
+        """Create a new sheet if it doesn't exist"""
+        try:
+            if self._sheet_exists(sheet_name):
+                return  # Sheet already exists
+            
+            request_body = {
+                'requests': [{
+                    'addSheet': {
+                        'properties': {
+                            'title': sheet_name
+                        }
+                    }
+                }]
+            }
+            
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body=request_body
+            ).execute()
+            
+            print(f"✓ Created sheet: {sheet_name}")
+        except Exception as error:
+            print(f"Error creating sheet {sheet_name}: {error}")
+            raise
+    
     # Varieties operations
     def get_varieties(self):
         """Get all varieties"""
@@ -452,6 +501,12 @@ class GoogleSheetsDB:
         for i, row in enumerate(rows[1:], start=2):  # Skip header
             if len(row) >= 8:
                 try:
+                    # Handle backward compatibility: courier_price is new, created_at was at index 7
+                    # If row has 8 columns, it's old format (no courier_price), created_at at index 7
+                    # If row has 9+ columns, it's new format, courier_price at index 7, created_at at index 8
+                    courier_price_idx = 7 if len(row) > 8 else None
+                    created_at_idx = 8 if len(row) > 8 else 7
+                    
                     orders.append({
                         'id': i,
                         'variety_id': int(row[0]) if row[0] else None,
@@ -461,14 +516,15 @@ class GoogleSheetsDB:
                         'delivery_date': datetime.strptime(row[4], '%Y-%m-%d').date() if row[4] else None,
                         'payment_status': row[5] if len(row) > 5 else 'unpaid',
                         'paid_amount': Decimal(str(row[6])) if len(row) > 6 and row[6] else Decimal('0'),
-                        'created_at': (datetime.strptime(row[7], '%Y-%m-%d %H:%M:%S').replace(tzinfo=IST) if len(row) > 7 and row[7] else get_ist_now())
+                        'courier_price': Decimal(str(row[courier_price_idx])) if courier_price_idx is not None and len(row) > courier_price_idx and row[courier_price_idx] else Decimal('0'),
+                        'created_at': (datetime.strptime(row[created_at_idx], '%Y-%m-%d %H:%M:%S').replace(tzinfo=IST) if len(row) > created_at_idx and row[created_at_idx] else get_ist_now())
                     })
                 except (ValueError, IndexError) as e:
                     print(f"Error parsing order row {i}: {e}")
                     continue
         return orders
     
-    def add_order(self, variety_id, shop_id, quantity, price, delivery_date, payment_status='unpaid', paid_amount=0):
+    def add_order(self, variety_id, shop_id, quantity, price, delivery_date, payment_status='unpaid', paid_amount=0, courier_price=0):
         """Add a new order"""
         values = [[
             str(variety_id),
@@ -478,11 +534,12 @@ class GoogleSheetsDB:
             delivery_date.strftime('%Y-%m-%d') if isinstance(delivery_date, date) else str(delivery_date),
             payment_status,
             str(paid_amount),
+            str(courier_price),
             get_ist_now().strftime('%Y-%m-%d %H:%M:%S')
         ]]
         self._append_sheet(SHEET_ORDERS, values)
     
-    def update_order(self, row_id, variety_id, shop_id, quantity, price, delivery_date, payment_status, paid_amount):
+    def update_order(self, row_id, variety_id, shop_id, quantity, price, delivery_date, payment_status, paid_amount, courier_price=0):
         """Update an order"""
         values = [
             str(variety_id),
@@ -492,6 +549,7 @@ class GoogleSheetsDB:
             delivery_date.strftime('%Y-%m-%d') if isinstance(delivery_date, date) else str(delivery_date),
             payment_status,
             str(paid_amount),
+            str(courier_price),
             get_ist_now().strftime('%Y-%m-%d %H:%M:%S')
         ]
         self._update_row(SHEET_ORDERS, row_id, values)
@@ -504,10 +562,68 @@ class GoogleSheetsDB:
             for i in range(len(rows), 1, -1):
                 self._delete_row(SHEET_ORDERS, i)
     
+    # Ingredient Prices operations
+    def get_ingredient_prices(self):
+        """Get all ingredient prices"""
+        rows = self._read_sheet(SHEET_INGREDIENT_PRICES)
+        if not rows:
+            return []
+        
+        ingredients = []
+        for i, row in enumerate(rows[1:], start=2):  # Skip header
+            if len(row) >= 5:
+                ingredients.append({
+                    'id': i,
+                    'name': row[0],
+                    'price': Decimal(str(row[1])) if row[1] else Decimal('0'),
+                    'unit': row[2] if len(row) > 2 else '',
+                    'package_size': Decimal(str(row[3])) if len(row) > 3 and row[3] else Decimal('1'),
+                    'package_unit': row[4] if len(row) > 4 else 'g',
+                    'updated_at': (datetime.strptime(row[5], '%Y-%m-%d %H:%M:%S').replace(tzinfo=IST) if len(row) > 5 and row[5] else get_ist_now())
+                })
+        return ingredients
+    
+    def add_ingredient_price(self, name, price, unit, package_size, package_unit):
+        """Add a new ingredient price"""
+        values = [[
+            name,
+            str(price),
+            unit,
+            str(package_size),
+            package_unit,
+            get_ist_now().strftime('%Y-%m-%d %H:%M:%S')
+        ]]
+        self._append_sheet(SHEET_INGREDIENT_PRICES, values)
+    
+    def update_ingredient_price(self, row_id, name, price, unit, package_size, package_unit):
+        """Update an ingredient price"""
+        values = [
+            name,
+            str(price),
+            unit,
+            str(package_size),
+            package_unit,
+            get_ist_now().strftime('%Y-%m-%d %H:%M:%S')
+        ]
+        self._update_row(SHEET_INGREDIENT_PRICES, row_id, values)
+    
     def initialize_sheets(self):
         """Initialize sheets with headers if they don't exist"""
         try:
-            # Check if sheets exist and create headers
+            # Create sheets if they don't exist
+            if not self._sheet_exists(SHEET_VARIETIES):
+                self._create_sheet(SHEET_VARIETIES)
+            
+            if not self._sheet_exists(SHEET_SHOPS):
+                self._create_sheet(SHEET_SHOPS)
+            
+            if not self._sheet_exists(SHEET_ORDERS):
+                self._create_sheet(SHEET_ORDERS)
+            
+            if not self._sheet_exists(SHEET_INGREDIENT_PRICES):
+                self._create_sheet(SHEET_INGREDIENT_PRICES)
+            
+            # Check if sheets have headers and create them if needed
             varieties = self._read_sheet(SHEET_VARIETIES)
             if not varieties:
                 self._write_sheet(SHEET_VARIETIES, [['Name', 'Default Price']], 'A1')
@@ -518,7 +634,32 @@ class GoogleSheetsDB:
             
             orders = self._read_sheet(SHEET_ORDERS)
             if not orders:
-                self._write_sheet(SHEET_ORDERS, [['Variety ID', 'Shop ID', 'Quantity', 'Price', 'Delivery Date', 'Payment Status', 'Paid Amount', 'Created At']], 'A1')
+                self._write_sheet(SHEET_ORDERS, [['Variety ID', 'Shop ID', 'Quantity', 'Price', 'Delivery Date', 'Payment Status', 'Paid Amount', 'Courier Price', 'Created At']], 'A1')
+            
+            ingredient_prices = self._read_sheet(SHEET_INGREDIENT_PRICES)
+            if not ingredient_prices:
+                self._write_sheet(SHEET_INGREDIENT_PRICES, [['Name', 'Price', 'Unit', 'Package Size', 'Package Unit', 'Updated At']], 'A1')
+                # Initialize with default prices
+                default_prices = [
+                    ['Dark Compound', '165', '500g', '500', 'g'],
+                    ['Butter', '100', '500g', '500', 'g'],
+                    ['Egg', '7', '1pc', '1', 'pc'],
+                    ['White Sugar', '50', '1kg', '1', 'kg'],
+                    ['Brown Sugar', '80', '1kg', '1', 'kg'],
+                    ['Vanilla Essence', '50', '100ml', '100', 'ml'],
+                    ['Maida/Ragi', '50', '1kg', '1', 'kg'],
+                    ['Mango Compound', '205', '500g', '500', 'g'],
+                    ['Pista Compound', '205', '500g', '500', 'g'],
+                    ['Pista Nuts', '445', '250g', '250', 'g'],
+                    ['Milk Compound', '190', '500g', '500', 'g'],
+                    ['White Compound', '205', '500g', '500', 'g'],
+                    ['Oven Charges', '20', '16 brownies', '16', 'pc'],
+                    ['Miscellaneous', '10', '16 brownies', '16', 'pc'],
+                    ['Packing', '28.8', '16 brownies', '16', 'pc'],
+                    ['Transportation', '20', '16 brownies', '16', 'pc'],
+                ]
+                for ing_data in default_prices:
+                    self.add_ingredient_price(ing_data[0], Decimal(ing_data[1]), ing_data[2], Decimal(ing_data[3]), ing_data[4])
             
             print("✓ Sheets initialized")
         except Exception as e:

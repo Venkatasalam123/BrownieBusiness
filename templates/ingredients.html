@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Ingredients Cost - Brownie Sales Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-shopping-basket me-2"></i>Ingredients Cost Management
+                </h2>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-4">
+                    Manage ingredient prices. These prices are used to calculate actual profit based on ingredient costs.
+                    <br><strong>Note:</strong> All prices shown are for the package size indicated.
+                </p>
+                
+                <form method="POST" action="{{ url_for('ingredients') }}">
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Ingredient Name</th>
+                                    <th>Package Size</th>
+                                    <th>Current Price (₹)</th>
+                                    <th>New Price (₹)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for ingredient in ingredients %}
+                                <tr>
+                                    <td>
+                                        <strong>{{ ingredient.name }}</strong>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-secondary">{{ ingredient.unit }}</span>
+                                    </td>
+                                    <td>
+                                        <strong>₹{{ "%.2f"|format(ingredient.price) }}</strong>
+                                    </td>
+                                    <td>
+                                        <input type="number" 
+                                               step="0.01" 
+                                               min="0" 
+                                               name="price_{{ ingredient.id }}" 
+                                               id="price_{{ ingredient.id }}"
+                                               class="form-control" 
+                                               value="{{ "%.2f"|format(ingredient.price) }}" 
+                                               required>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="mt-4">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="fas fa-save me-2"></i>Update All Prices
+                        </button>
+                        <a href="{{ url_for('index') }}" class="btn btn-secondary btn-lg ms-2">
+                            <i class="fas fa-times me-2"></i>Cancel
+                        </a>
+                    </div>
+                </form>
+                
+                <hr class="my-4">
+                
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-calculator me-2"></i>Cost Breakdown by Variety
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-4">
+                            Detailed cost breakdown for each brownie variety. All costs are calculated for 16 brownies and then divided to show cost per brownie.
+                        </p>
+                        
+                        {% if variety_breakdowns %}
+                        <div class="accordion" id="varietyCostBreakdown">
+                            {% for variety_name, breakdown in variety_breakdowns.items() %}
+                            <div class="accordion-item">
+                                <h2 class="accordion-header" id="heading{{ loop.index }}">
+                                    <button class="accordion-button {% if loop.index != 1 %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{ loop.index }}">
+                                        <strong>{{ variety_name }}</strong> - ₹{{ "%.2f"|format(breakdown.cost_per_brownie) }} per brownie
+                                    </button>
+                                </h2>
+                                <div id="collapse{{ loop.index }}" class="accordion-collapse collapse {% if loop.index == 1 %}show{% endif %}" data-bs-parent="#varietyCostBreakdown">
+                                    <div class="accordion-body">
+                                        <p class="text-muted mb-3"><strong>Cost Breakdown for 16 brownies:</strong></p>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-bordered">
+                                                <thead class="table-light">
+                                                    <tr>
+                                                        <th>Ingredient</th>
+                                                        <th>Quantity</th>
+                                                        <th>Package Price</th>
+                                                        <th>Package Size</th>
+                                                        <th>Price/Unit</th>
+                                                        <th>Cost</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for ing in breakdown.ingredients %}
+                                                    <tr>
+                                                        <td><strong>{{ ing.name }}</strong></td>
+                                                        <td>{{ ing.quantity }}</td>
+                                                        <td>₹{{ "%.2f"|format(ing.package_price) }}</td>
+                                                        <td>{{ ing.package_size }}</td>
+                                                        <td>₹{{ "%.4f"|format(ing.price_per_unit) }}</td>
+                                                        <td><strong>₹{{ "%.2f"|format(ing.cost) }}</strong></td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                    <tr class="table-info">
+                                                        <td colspan="5" class="text-end"><strong>Total Cost (16 brownies):</strong></td>
+                                                        <td><strong>₹{{ "%.2f"|format(breakdown.total_cost_16_brownies) }}</strong></td>
+                                                    </tr>
+                                                    <tr class="table-success">
+                                                        <td colspan="5" class="text-end"><strong>Cost per Brownie (÷ 16):</strong></td>
+                                                        <td><strong>₹{{ "%.2f"|format(breakdown.cost_per_brownie) }}</strong></td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>No variety cost breakdowns available. Please ensure varieties are configured.
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

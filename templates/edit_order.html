@@ -78,6 +78,16 @@
                     </div>
 
                     <div class="row">
+                        <div class="col-md-6 mb-4">
+                            <label for="courier_price" class="form-label">
+                                <i class="fas fa-truck me-2"></i>Courier Price (₹)
+                            </label>
+                            <input type="number" class="form-control form-control-lg" id="courier_price" name="courier_price" step="0.01" min="0" value="{{ order.courier_price if order.courier_price else 0 }}">
+                            <small class="form-text">Courier/shipping cost (if applicable)</small>
+                        </div>
+                    </div>
+
+                    <div class="row">
                         <div class="col-12 mb-3">
                             <div class="alert alert-info">
                                 <strong>Total Amount:</strong> <span id="total_display">₹{{ "%.2f"|format(order.price * order.quantity) }}</span>
