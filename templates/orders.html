@@ -12,7 +12,7 @@
                 </h2>
             </div>
             <div class="card-body">
-                <!-- Shop Filter -->
+                <!-- Filters -->
                 <div class="mb-4">
                     <form method="GET" action="{{ url_for('orders') }}" class="d-flex align-items-center gap-3 flex-wrap">
                         <label for="shop_filter" class="form-label mb-0">
@@ -26,12 +26,25 @@
                             </option>
                             {% endfor %}
                         </select>
-                        {% if shop_id_filter %}
+                        <div class="form-check ms-3" style="min-width: 220px;">
+                            <input class="form-check-input" type="checkbox" name="pending_only" value="true" id="pending_only_filter" {% if pending_only %}checked{% endif %} onchange="this.form.submit()">
+                            <label class="form-check-label {% if pending_only %}fw-bold text-danger{% endif %}" for="pending_only_filter">
+                                <i class="fas fa-exclamation-triangle me-1"></i><strong>Pending Payments Only</strong>
+                            </label>
+                        </div>
+                        {% if shop_id_filter or pending_only %}
                         <a href="{{ url_for('orders') }}" class="btn btn-outline-secondary btn-sm">
-                            <i class="fas fa-times me-1"></i>Clear Filter
+                            <i class="fas fa-times me-1"></i>Clear Filters
                         </a>
                         {% endif %}
                     </form>
+                    {% if pending_only %}
+                    <div class="mt-2">
+                        <span class="badge bg-danger">
+                            <i class="fas fa-filter me-1"></i>Showing only orders with pending payments
+                        </span>
+                    </div>
+                    {% endif %}
                     {% if selected_shop %}
                     <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
                         <span class="badge bg-info">
@@ -138,6 +151,9 @@
                                                     <form method="POST" action="{{ url_for('mark_order_paid', id=order.id) }}" class="d-inline">
                                                         {% if shop_id_filter %}
                                                         <input type="hidden" name="shop_id" value="{{ shop_id_filter }}">
+                                                        {% endif %}
+                                                        {% if pending_only %}
+                                                        <input type="hidden" name="pending_only" value="true">
                                                         {% endif %}
                                                         <button type="submit" class="btn btn-sm btn-success me-1" title="Mark as Paid">
                                                             <i class="fas fa-check"></i> Paid

@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+
+{% block title %}Invoice - {{ shop.name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+        body {
+            background: white;
+        }
+        .card {
+            border: none;
+            box-shadow: none;
+        }
+        .invoice-mobile {
+            display: none !important;
+        }
+        .invoice-desktop {
+            display: block !important;
+        }
+    }
+    .invoice-header {
+        border-bottom: 3px solid var(--primary);
+        padding-bottom: var(--spacing-sm);
+        margin-bottom: var(--spacing-md);
+    }
+    .invoice-header h1 {
+        font-size: 1.5rem;
+        margin-bottom: var(--spacing-xs);
+    }
+    .invoice-info {
+        margin-bottom: var(--spacing-md);
+    }
+    .invoice-info-row {
+        margin-bottom: var(--spacing-sm);
+    }
+    .invoice-item {
+        border-bottom: 1px solid var(--gray-200);
+        padding: var(--spacing-sm) 0;
+    }
+    .invoice-summary {
+        background: var(--gray-100);
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        margin-top: var(--spacing-md);
+    }
+    .invoice-summary h3 {
+        font-size: 1rem;
+        margin-bottom: var(--spacing-xs);
+    }
+    .invoice-summary h1 {
+        font-size: 1.75rem;
+    }
+    #invoiceContent {
+        background: white;
+        padding: var(--spacing-sm);
+    }
+    
+    /* Mobile Card Layout */
+    .invoice-mobile {
+        display: block;
+    }
+    .invoice-order-card {
+        background: white;
+        border: 1px solid var(--gray-200);
+        border-radius: var(--radius);
+        padding: var(--spacing-sm);
+        margin-bottom: var(--spacing-sm);
+    }
+    .invoice-order-card .order-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--spacing-xs) 0;
+        border-bottom: 1px solid var(--gray-100);
+    }
+    .invoice-order-card .order-row:last-child {
+        border-bottom: none;
+    }
+    .order-label {
+        font-weight: 500;
+        color: var(--gray-600);
+        font-size: 0.875rem;
+    }
+    .order-value {
+        font-weight: 600;
+        color: var(--gray-900);
+    }
+    .order-value.pending {
+        color: var(--danger);
+    }
+    .order-value.paid {
+        color: var(--success);
+    }
+    
+    /* Desktop Table Layout */
+    .invoice-desktop {
+        display: none;
+    }
+    
+    @media (min-width: 768px) {
+        .invoice-header h1 {
+            font-size: 2rem;
+        }
+        .invoice-summary {
+            padding: var(--spacing-lg);
+        }
+        .invoice-summary h1 {
+            font-size: 2.5rem;
+        }
+        #invoiceContent {
+            max-width: 210mm; /* A4 width */
+            margin: 0 auto;
+            padding: var(--spacing-xl);
+        }
+        .invoice-mobile {
+            display: none;
+        }
+        .invoice-desktop {
+            display: block;
+        }
+    }
+    
+    @media print {
+        #invoiceContent {
+            max-width: 100%;
+            padding: 0;
+        }
+        .invoice-mobile {
+            display: none !important;
+        }
+        .invoice-desktop {
+            display: block !important;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body" id="invoiceContent">
+                <!-- Invoice Header -->
+                <div class="invoice-header text-center">
+                    <h1 class="mb-1">INVOICE</h1>
+                    <p class="text-muted mb-0 small">Brownie Sales</p>
+                </div>
+
+                <!-- Invoice Info -->
+                <div class="invoice-info">
+                    <div class="invoice-info-row">
+                        <div class="text-muted small">Bill To:</div>
+                        <div class="fw-bold">{{ shop.name }}</div>
+                    </div>
+                    <div class="invoice-info-row">
+                        <div class="text-muted small">Invoice Date:</div>
+                        <div>{{ invoice_date.strftime('%B %d, %Y') }}</div>
+                    </div>
+                    <div class="invoice-info-row">
+                        <div class="text-muted small">Period:</div>
+                        <div>{{ start_date.strftime('%B %d, %Y') }} to {{ end_date.strftime('%B %d, %Y') }}</div>
+                    </div>
+                </div>
+
+                {% if invoice_orders %}
+                <!-- Mobile Card Layout -->
+                <div class="invoice-mobile">
+                    {% for item in invoice_orders %}
+                    <div class="invoice-order-card">
+                        <div class="order-row">
+                            <span class="order-label">Date:</span>
+                            <span class="order-value">{{ item.order.delivery_date.strftime('%d-%m-%Y') }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Variety:</span>
+                            <span class="order-value">{{ item.order.variety.name }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Quantity:</span>
+                            <span class="order-value">{{ item.order.quantity }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Price/Unit:</span>
+                            <span class="order-value">₹{{ "%.2f"|format(item.order.price) }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Total:</span>
+                            <span class="order-value">₹{{ "%.2f"|format(item.total) }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Paid:</span>
+                            <span class="order-value paid">₹{{ "%.2f"|format(item.paid) }}</span>
+                        </div>
+                        <div class="order-row">
+                            <span class="order-label">Pending:</span>
+                            <span class="order-value {% if item.pending > 0 %}pending{% else %}paid{% endif %}">₹{{ "%.2f"|format(item.pending) }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Desktop Table Layout -->
+                <div class="invoice-desktop table-responsive">
+                    <table class="table table-bordered">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Date</th>
+                                <th>Variety</th>
+                                <th class="text-end">Quantity</th>
+                                <th class="text-end">Price/Unit</th>
+                                <th class="text-end">Total</th>
+                                <th class="text-end">Paid</th>
+                                <th class="text-end">Pending</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in invoice_orders %}
+                            <tr>
+                                <td>{{ item.order.delivery_date.strftime('%d-%m-%Y') }}</td>
+                                <td>{{ item.order.variety.name }}</td>
+                                <td class="text-end">{{ item.order.quantity }}</td>
+                                <td class="text-end">₹{{ "%.2f"|format(item.order.price) }}</td>
+                                <td class="text-end">₹{{ "%.2f"|format(item.total) }}</td>
+                                <td class="text-end text-success">₹{{ "%.2f"|format(item.paid) }}</td>
+                                <td class="text-end {% if item.pending > 0 %}text-danger{% else %}text-success{% endif %}">
+                                    <strong>₹{{ "%.2f"|format(item.pending) }}</strong>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="table-light">
+                            <tr>
+                                <td colspan="4" class="text-end"><strong>Total Amount:</strong></td>
+                                <td class="text-end"><strong>₹{{ "%.2f"|format(total_amount) }}</strong></td>
+                                <td class="text-end text-success"><strong>₹{{ "%.2f"|format(total_paid) }}</strong></td>
+                                <td class="text-end {% if total_pending > 0 %}text-danger{% else %}text-success{% endif %}">
+                                    <strong style="font-size: 1.2rem;">₹{{ "%.2f"|format(total_pending) }}</strong>
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <div class="invoice-summary">
+                    <div class="row text-center">
+                        <div class="col-md-4 mb-3 mb-md-0">
+                            <h3 class="text-muted mb-2">Total Amount</h3>
+                            <h1 class="mb-0">₹{{ "%.2f"|format(total_amount) }}</h1>
+                        </div>
+                        <div class="col-md-4 mb-3 mb-md-0">
+                            <h3 class="text-success mb-2">Total Paid</h3>
+                            <h1 class="text-success mb-0">₹{{ "%.2f"|format(total_paid) }}</h1>
+                        </div>
+                        <div class="col-md-4">
+                            <h3 class="{% if total_pending > 0 %}text-danger{% else %}text-success{% endif %} mb-2">Amount Due</h3>
+                            <h1 class="{% if total_pending > 0 %}text-danger{% else %}text-success{% endif %} mb-0">₹{{ "%.2f"|format(total_pending) }}</h1>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-3 text-center text-muted">
+                    <p class="mb-1 small">Thank you for your business!</p>
+                    <p class="mb-0 small">Please make payment at your earliest convenience.</p>
+                </div>
+
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                    <h4>No Orders Found</h4>
+                    <p class="text-muted">No orders found for {{ shop.name }} in the selected period.</p>
+                </div>
+                {% endif %}
+
+                <!-- Action Buttons -->
+                <div class="mt-3 text-center no-print">
+                    <button onclick="window.print()" class="btn btn-primary btn-lg w-100 mb-2">
+                        <i class="fas fa-print me-2"></i>Print / Save as PDF
+                    </button>
+                    <a href="{{ url_for('shop_invoice', id=shop.id) }}" class="btn btn-secondary btn-lg w-100 mb-2">
+                        <i class="fas fa-calendar-alt me-2"></i>Change Date Range
+                    </a>
+                    <a href="{{ url_for('shops') }}" class="btn btn-outline-secondary btn-lg w-100">
+                        <i class="fas fa-arrow-left me-2"></i>Back to Shops
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

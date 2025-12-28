@@ -654,7 +654,7 @@ class GoogleSheetsDB:
                     ['Milk Compound', '190', '500g', '500', 'g'],
                     ['White Compound', '205', '500g', '500', 'g'],
                     ['Oven Charges', '20', '16 brownies', '16', 'pc'],
-                    ['Miscellaneous', '10', '16 brownies', '16', 'pc'],
+                    ['Miscellaneous', '15', '16 brownies', '16', 'pc'],
                     ['Packing', '28.8', '16 brownies', '16', 'pc'],
                     ['Transportation', '20', '16 brownies', '16', 'pc'],
                 ]

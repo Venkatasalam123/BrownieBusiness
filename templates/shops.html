@@ -59,8 +59,8 @@
                             {% endif %}
                         </div>
                         
-                        <!-- Action Buttons: Update, Delete, Generate Bill -->
-                        <div class="d-flex gap-2">
+                        <!-- Action Buttons: Update, Delete, Generate Bill, Generate Invoice -->
+                        <div class="d-flex gap-2 flex-wrap">
                             <!-- Update Button -->
                             <button type="button" class="btn btn-primary flex-fill" onclick="editShopName({{ item.shop.id }}, '{{ item.shop.name }}')" title="Update">
                                 <i class="fas fa-edit"></i>
@@ -75,14 +75,19 @@
                             
                             <!-- Generate Bill Button -->
                             {% if item.pending > 0 %}
-                            <a href="{{ url_for('shop_bill', id=item.shop.id) }}" class="btn btn-primary flex-fill" target="_blank" title="Generate Bill">
-                                <i class="fas fa-file-invoice"></i>
+                            <a href="{{ url_for('shop_bill', id=item.shop.id) }}" class="btn btn-primary flex-fill" target="_blank" title="Generate Bill (Pending Only)">
+                                <i class="fas fa-file-invoice me-1"></i>Bill
                             </a>
                             {% else %}
                             <button class="btn btn-secondary flex-fill" disabled title="No Pending">
-                                <i class="fas fa-file-invoice"></i>
+                                <i class="fas fa-file-invoice me-1"></i>Bill
                             </button>
                             {% endif %}
+                            
+                            <!-- Generate Invoice Button -->
+                            <a href="{{ url_for('shop_invoice', id=item.shop.id) }}" class="btn btn-success flex-fill" title="Generate Invoice (Date Range)">
+                                <i class="fas fa-file-alt me-1"></i>Invoice
+                            </a>
                         </div>
                         
                         <!-- Hidden Update Form -->
@@ -110,7 +115,8 @@
                                 <th><i class="fas fa-exclamation-triangle"></i></th>
                                 <th><i class="fas fa-edit"></i></th>
                                 <th><i class="fas fa-trash"></i></th>
-                                <th><i class="fas fa-file-invoice"></i></th>
+                                <th><i class="fas fa-file-invoice"></i> Bill</th>
+                                <th><i class="fas fa-file-alt"></i> Invoice</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -138,19 +144,24 @@
                                 </td>
                                 <td>
                                     {% if item.pending > 0 %}
-                                    <a href="{{ url_for('shop_bill', id=item.shop.id) }}" class="btn btn-sm btn-primary" target="_blank" title="Generate Bill">
-                                        <i class="fas fa-file-invoice"></i>
+                                    <a href="{{ url_for('shop_bill', id=item.shop.id) }}" class="btn btn-sm btn-primary" target="_blank" title="Generate Bill (Pending Only)">
+                                        <i class="fas fa-file-invoice me-1"></i>Bill
                                     </a>
                                     {% else %}
                                     <button class="btn btn-sm btn-secondary" disabled title="No Pending">
-                                        <i class="fas fa-file-invoice"></i>
+                                        <i class="fas fa-file-invoice me-1"></i>Bill
                                     </button>
                                     {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('shop_invoice', id=item.shop.id) }}" class="btn btn-sm btn-success" title="Generate Invoice (Date Range)">
+                                        <i class="fas fa-file-alt me-1"></i>Invoice
+                                    </a>
                                 </td>
                             </tr>
                             <!-- Hidden Update Form for Desktop -->
                             <tr class="d-none" id="update-row-{{ item.shop.id }}">
-                                <td colspan="5">
+                                <td colspan="6">
                                     <form method="POST" action="{{ url_for('update_shop', id=item.shop.id) }}" class="d-flex gap-2">
                                         <input type="text" class="form-control" name="name" value="{{ item.shop.name }}" required id="name-input-desktop-{{ item.shop.id }}">
                                         <button type="submit" class="btn btn-sm btn-success" title="Save">

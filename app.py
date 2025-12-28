@@ -26,6 +26,31 @@ app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
 def inject_config():
     return dict(USE_GOOGLE_SHEETS=USE_GOOGLE_SHEETS)
 
+def _update_miscellaneous_cost():
+    """Update Miscellaneous cost from ₹10 to ₹15 if needed (for both SQLite and Google Sheets)"""
+    if IngredientPrice is None:
+        return
+    
+    miscellaneous = IngredientPrice.query.filter_by(name='Miscellaneous').first()
+    if miscellaneous and float(miscellaneous.price) == 10:
+        # Update to ₹15
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.update_ingredient_price(
+                miscellaneous.id,
+                'Miscellaneous',
+                Decimal('15'),
+                '16 brownies',
+                Decimal('16'),
+                'pc'
+            )
+        else:
+            miscellaneous.price = Decimal('15')
+            miscellaneous.updated_at = datetime.utcnow()
+            db_session.commit()
+
+
 if not USE_GOOGLE_SHEETS:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///brownie_sales.db'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -35,11 +60,15 @@ if not USE_GOOGLE_SHEETS:
         db.create_all()
         # Initialize default ingredient prices if they don't exist
         _initialize_default_ingredient_prices()
+        # Update Miscellaneous cost if needed
+        _update_miscellaneous_cost()
 else:
     db.init_app(app)
     # Initialize Google Sheets (this will also initialize ingredient prices)
     with app.app_context():
         db.create_all()
+        # Update Miscellaneous cost if needed
+        _update_miscellaneous_cost()
 
 
 def _initialize_default_ingredient_prices():
@@ -61,7 +90,7 @@ def _initialize_default_ingredient_prices():
         {'name': 'Milk Compound', 'price': 190, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
         {'name': 'White Compound', 'price': 205, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
         {'name': 'Oven Charges', 'price': 20, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
-        {'name': 'Miscellaneous', 'price': 10, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
+        {'name': 'Miscellaneous', 'price': 15, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
         {'name': 'Packing', 'price': 28.8, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
         {'name': 'Transportation', 'price': 20, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
     ]
@@ -79,6 +108,13 @@ def _initialize_default_ingredient_prices():
             db_session.add(ingredient)
         elif ing_data['name'] == 'Pista Nuts' and existing.package_size == 25:
             # Update existing Pista Nuts if it still has old value (25g)
+            existing.price = Decimal(str(ing_data['price']))
+            existing.unit = ing_data['unit']
+            existing.package_size = Decimal(str(ing_data['package_size']))
+            existing.package_unit = ing_data['package_unit']
+            existing.updated_at = datetime.utcnow()
+        elif ing_data['name'] == 'Miscellaneous' and float(existing.price) == 10:
+            # Update existing Miscellaneous if it still has old value (₹10)
             existing.price = Decimal(str(ing_data['price']))
             existing.unit = ing_data['unit']
             existing.package_size = Decimal(str(ing_data['package_size']))
@@ -215,7 +251,7 @@ def calculate_cost_per_brownie(variety_name):
             total_cost += price_per_batch  # Already for 16 brownies batch
     else:
         # Fallback: Add miscellaneous cost directly if not in database
-        total_cost += 10.0  # ₹10 for 16 brownies
+        total_cost += 15.0  # ₹15 for 16 brownies
     
     # Add packing cost (₹1.8 per brownie × 16 = ₹28.8 for 16 brownies)
     packing = get_ingredient_price('Packing')
@@ -911,8 +947,9 @@ def delete_shop(id):
 @app.route('/orders')
 def orders():
     """Order history page - shows all orders grouped by month, then by date"""
-    # Get filter parameter
+    # Get filter parameters
     shop_id_filter = request.args.get('shop_id', type=int)
+    pending_only = request.args.get('pending_only', type=str) == 'true'
     
     # Get all shops for filter dropdown
     all_shops = Shop.query.order_by(Shop.name).all()
@@ -925,6 +962,17 @@ def orders():
     else:
         all_orders = Order.query.order_by(Order.delivery_date.desc(), Order.created_at.desc()).all()
         selected_shop = None
+    
+    # Filter by pending payments if requested
+    if pending_only:
+        filtered_orders = []
+        for order in all_orders:
+            order_total = float(order.price * order.quantity)
+            paid_amt = float(order.paid_amount) if order.paid_amount else 0
+            pending_amt = order_total - paid_amt
+            if pending_amt > 0:
+                filtered_orders.append(order)
+        all_orders = filtered_orders
     
     # Group orders by month, then by date
     orders_by_month = {}
@@ -974,7 +1022,7 @@ def orders():
         months_grouped.append((month_key, month_data['label'], dates_list, month_data['month_total'], month_data['month_pending'], month_order_count))
     
     # Timestamps are now stored in IST, so no offset needed
-    return render_template('orders.html', months_grouped=months_grouped, total_sales=total_sales, total_pending=total_pending, total_orders=len(all_orders), all_shops=all_shops, selected_shop=selected_shop, shop_id_filter=shop_id_filter)
+    return render_template('orders.html', months_grouped=months_grouped, total_sales=total_sales, total_pending=total_pending, total_orders=len(all_orders), all_shops=all_shops, selected_shop=selected_shop, shop_id_filter=shop_id_filter, pending_only=pending_only)
 
 
 @app.route('/ingredients', methods=['GET', 'POST'])
@@ -1569,6 +1617,93 @@ def shop_bill(id):
     return render_template('bill.html', shop=shop, unpaid_orders=unpaid_orders, total_pending=total_pending, bill_date=bill_date)
 
 
+@app.route('/shops/<int:id>/invoice', methods=['GET', 'POST'])
+def shop_invoice(id):
+    """Generate invoice for a shop with date period filter"""
+    shop = Shop.query.get_or_404(id)
+    
+    if request.method == 'GET':
+        # Show form to select date range
+        return render_template('invoice_form.html', shop=shop)
+    
+    # POST request - generate invoice
+    start_date_str = request.form.get('start_date')
+    end_date_str = request.form.get('end_date')
+    
+    if not start_date_str or not end_date_str:
+        flash('Please select both start and end dates', 'error')
+        return redirect(url_for('shop_invoice', id=id))
+    
+    try:
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+        
+        if start_date > end_date:
+            flash('Start date must be before or equal to end date', 'error')
+            return redirect(url_for('shop_invoice', id=id))
+    except ValueError:
+        flash('Invalid date format', 'error')
+        return redirect(url_for('shop_invoice', id=id))
+    
+    # Get all orders for this shop within the date range
+    if USE_GOOGLE_SHEETS:
+        all_orders = Order.query.filter_by(shop_id=id).all()
+        # Filter by date range
+        filtered_orders = []
+        for order in all_orders:
+            if order.delivery_date:
+                # Handle both date and datetime objects
+                if hasattr(order.delivery_date, 'date'):
+                    order_date = order.delivery_date.date()
+                else:
+                    order_date = order.delivery_date
+                if start_date <= order_date <= end_date:
+                    filtered_orders.append(order)
+        # Sort by delivery date (newest first)
+        filtered_orders.sort(key=lambda x: x.delivery_date if x.delivery_date else date.min, reverse=True)
+    else:
+        from sqlalchemy import and_
+        filtered_orders = Order.query.filter(
+            and_(
+                Order.shop_id == id,
+                Order.delivery_date >= start_date,
+                Order.delivery_date <= end_date
+            )
+        ).order_by(Order.delivery_date.desc()).all()
+    
+    # Process orders for invoice
+    invoice_orders = []
+    total_amount = 0
+    total_paid = 0
+    total_pending = 0
+    
+    for order in filtered_orders:
+        order_total = float(order.price * order.quantity)
+        paid_amt = float(order.paid_amount) if order.paid_amount else 0
+        pending_amt = order_total - paid_amt
+        
+        invoice_orders.append({
+            'order': order,
+            'total': order_total,
+            'paid': paid_amt,
+            'pending': pending_amt
+        })
+        total_amount += order_total
+        total_paid += paid_amt
+        total_pending += pending_amt
+    
+    invoice_date = datetime.now()
+    return render_template('invoice.html', 
+                         shop=shop, 
+                         invoice_orders=invoice_orders, 
+                         total_amount=total_amount,
+                         total_paid=total_paid,
+                         total_pending=total_pending,
+                         invoice_date=invoice_date,
+                         start_date=start_date,
+                         end_date=end_date)
+
+
 @app.route('/orders/edit/<int:id>', methods=['GET', 'POST'])
 def edit_order(id):
     """Edit an existing order"""
@@ -1682,11 +1817,15 @@ def mark_order_paid(id):
         
         flash(f'Order marked as paid! Amount: ₹{total_amount:.2f}', 'success')
         
-        # Redirect back to orders page, preserving filter if present
+        # Redirect back to orders page, preserving filters if present
         shop_id = request.form.get('shop_id', type=int)
+        pending_only = request.form.get('pending_only', type=str) == 'true'
+        redirect_args = {}
         if shop_id:
-            return redirect(url_for('orders', shop_id=shop_id))
-        return redirect(url_for('orders'))
+            redirect_args['shop_id'] = shop_id
+        if pending_only:
+            redirect_args['pending_only'] = 'true'
+        return redirect(url_for('orders', **redirect_args))
     
     except Exception as e:
         if not USE_GOOGLE_SHEETS:
