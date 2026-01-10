@@ -131,9 +131,21 @@ def get_ingredient_price(name):
     return IngredientPrice.query.filter_by(name=name).first()
 
 
+# For sales calculations, always use actual order.price from database
+# The calculated price from get_cost_breakdown() should only be used for cost calculations, not sales
+
+
 def calculate_cost_per_brownie(variety_name):
     """Calculate the cost per brownie based on variety and ingredient prices"""
     if IngredientPrice is None:
+        return None
+    
+    # Handle Combo Pack 1 specially - use the calculated cost from get_cost_breakdown
+    if variety_name.lower() == 'combo pack 1':
+        breakdown = get_cost_breakdown(variety_name)
+        if breakdown:
+            # For Combo Pack 1, cost_per_brownie is actually the total combo pack cost
+            return breakdown.get('cost_per_brownie', None)
         return None
     
     # Ingredients needed for 16 brownies
@@ -282,6 +294,101 @@ def get_cost_breakdown(variety_name):
     """Get detailed cost breakdown for a variety showing how cost per brownie is calculated"""
     if IngredientPrice is None:
         return None
+    
+    # Handle Combo Pack 1 specially
+    if variety_name.lower() == 'combo pack 1':
+        # Calculate cost for Combo Pack 1 = Classic Brownie + Mango Brownie + Pista Brownie + 3.5 (extra packing)
+        # Find varieties dynamically (case-insensitive)
+        all_varieties = Variety.query.all()
+        classic_name = None
+        mango_name = None
+        pista_name = None
+        
+        for v in all_varieties:
+            v_lower = v.name.lower()
+            if 'classic' in v_lower and 'brownie' in v_lower and classic_name is None:
+                classic_name = v.name
+            elif 'mango' in v_lower and 'brownie' in v_lower and mango_name is None:
+                mango_name = v.name
+            elif 'pista' in v_lower and 'brownie' in v_lower and pista_name is None:
+                pista_name = v.name
+        
+        # Fallback to exact names if not found
+        if not classic_name:
+            classic_name = 'Classic Brownie'
+        if not mango_name:
+            mango_name = 'Mango Brownie'
+        if not pista_name:
+            pista_name = 'Pista Brownie'
+        
+        classic_breakdown = get_cost_breakdown(classic_name)
+        mango_breakdown = get_cost_breakdown(mango_name)
+        pista_breakdown = get_cost_breakdown(pista_name)
+        
+        breakdown = {
+            'variety': variety_name,
+            'ingredients': [],
+            'total_cost_16_brownies': 0,
+            'cost_per_brownie': 0
+        }
+        
+        extra_packing_cost = 5.0
+        combo_cost = 0.0
+        
+        # Add Classic Brownie cost
+        if classic_breakdown:
+            classic_cost = classic_breakdown.get('cost_per_brownie', 0)
+            combo_cost += classic_cost
+            breakdown['ingredients'].append({
+                'name': classic_name,
+                'quantity': '1 brownie',
+                'package_price': 0,
+                'package_size': '1 brownie',
+                'price_per_unit': classic_cost,
+                'cost': classic_cost
+            })
+        
+        # Add Mango Brownie cost
+        if mango_breakdown:
+            mango_cost = mango_breakdown.get('cost_per_brownie', 0)
+            combo_cost += mango_cost
+            breakdown['ingredients'].append({
+                'name': mango_name,
+                'quantity': '1 brownie',
+                'package_price': 0,
+                'package_size': '1 brownie',
+                'price_per_unit': mango_cost,
+                'cost': mango_cost
+            })
+        
+        # Add Pista Brownie cost
+        if pista_breakdown:
+            pista_cost = pista_breakdown.get('cost_per_brownie', 0)
+            combo_cost += pista_cost
+            breakdown['ingredients'].append({
+                'name': pista_name,
+                'quantity': '1 brownie',
+                'package_price': 0,
+                'package_size': '1 brownie',
+                'price_per_unit': pista_cost,
+                'cost': pista_cost
+            })
+        
+        # Add extra packing cost
+        combo_cost += extra_packing_cost
+        breakdown['ingredients'].append({
+            'name': 'Extra Packing',
+            'quantity': '1 combo pack',
+            'package_price': extra_packing_cost,
+            'package_size': '1 combo pack',
+            'price_per_unit': extra_packing_cost,
+            'cost': extra_packing_cost
+        })
+        
+        breakdown['cost_per_brownie'] = combo_cost
+        breakdown['total_cost_16_brownies'] = combo_cost  # For 1 combo pack
+        
+        return breakdown
     
     breakdown = {
         'variety': variety_name,
@@ -617,7 +724,7 @@ def calculate_total_cost_and_profit(orders):
     """Calculate total ingredient cost and profit for a list of orders"""
     if IngredientPrice is None:
         # Fallback to 30% margin if ingredient prices not available
-        total_sales = sum(float(order.price * order.quantity) for order in orders)
+        total_sales = sum(float(order.price * max(0, (order.quantity or 0) - (order.returns or 0))) for order in orders)
         return total_sales * 0.30, total_sales * 0.30
     
     total_cost = 0
@@ -627,20 +734,31 @@ def calculate_total_cost_and_profit(orders):
         variety = order.variety
         variety_name = variety.name if variety else 'Classic Brownie'
         
+        # Calculate effective quantity (quantity - returns)
+        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+        
         # Calculate cost per brownie for this variety
         cost_per_brownie = calculate_cost_per_brownie(variety_name)
         
         if cost_per_brownie is None:
             continue
         
-        # Determine brownie count based on price
-        order_price = float(order.price)
-        order_quantity = float(order.quantity)
-        
-        brownies_per_unit = calculate_brownies_from_price(order_price)
-        brownies_count = brownies_per_unit * order_quantity
-        total_cost += brownies_count * cost_per_brownie
-        total_sales += float(order.price * order.quantity)
+        # For Combo Pack 1, cost_per_brownie is actually cost per combo pack
+        if variety_name.lower() == 'combo pack 1':
+            # For Combo Pack 1, cost_per_brownie is already the total cost of one combo pack
+            # So we multiply directly by effective quantity (number of combo packs)
+            total_cost += cost_per_brownie * effective_quantity
+            # For sales, always use actual order.price from database (sum of all order prices)
+            total_sales += float(order.price * effective_quantity)
+        else:
+            # For regular brownies, determine brownie count based on price
+            order_price = float(order.price)
+            order_quantity = float(effective_quantity)
+            
+            brownies_per_unit = calculate_brownies_from_price(order_price)
+            brownies_count = brownies_per_unit * order_quantity
+            total_cost += brownies_count * cost_per_brownie
+            total_sales += float(order.price * effective_quantity)
     
     # Subtract total courier costs from profit
     total_courier = sum(float(order.courier_price) if order.courier_price else 0.0 for order in orders)
@@ -664,6 +782,7 @@ def add_order():
         variety_id = request.form.get('variety_id', type=int)
         shop_id = request.form.get('shop_id', type=int)
         quantity = request.form.get('quantity', type=int)
+        returns = request.form.get('returns', type=int) or 0
         price = request.form.get('price', type=float)
         delivery_date_str = request.form.get('delivery_date')
         payment_status = request.form.get('payment_status', 'unpaid')
@@ -679,12 +798,19 @@ def add_order():
             flash('Quantity and price must be positive numbers', 'error')
             return redirect(url_for('index'))
         
+        if returns < 0 or returns > quantity:
+            flash('Returns must be between 0 and quantity', 'error')
+            return redirect(url_for('index'))
+        
+        # Calculate effective quantity (quantity - returns)
+        effective_quantity = max(0, quantity - returns)
+        
         # Validate payment status
         if payment_status not in ['paid', 'unpaid', 'partial']:
             payment_status = 'unpaid'
         
-        # Validate paid amount
-        total_amount = float(price * quantity)
+        # Validate paid amount based on effective quantity
+        total_amount = float(price * effective_quantity)
         if payment_status == 'paid':
             paid_amount = total_amount
         elif payment_status == 'partial':
@@ -706,21 +832,38 @@ def add_order():
         shop = Shop.query.get_or_404(shop_id)
         
         # Create order
-        order = Order(
-            variety_id=variety_id,
-            shop_id=shop_id,
-            quantity=quantity,
-            price=Decimal(str(price)),
-            delivery_date=delivery_date,
-            payment_status=payment_status,
-            paid_amount=Decimal(str(paid_amount)),
-            courier_price=Decimal(str(courier_price))
-        )
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.add_order(
+                variety_id,
+                shop_id,
+                quantity,
+                Decimal(str(price)),
+                delivery_date,
+                payment_status,
+                Decimal(str(paid_amount)),
+                Decimal(str(courier_price)),
+                returns
+            )
+            order_total = total_amount
+        else:
+            order = Order(
+                variety_id=variety_id,
+                shop_id=shop_id,
+                quantity=quantity,
+                returns=returns,
+                price=Decimal(str(price)),
+                delivery_date=delivery_date,
+                payment_status=payment_status,
+                paid_amount=Decimal(str(paid_amount)),
+                courier_price=Decimal(str(courier_price))
+            )
+            db_session.add(order)
+            db_session.commit()
+            order_total = float(order.price * effective_quantity)
         
-        db_session.add(order)
-        db_session.commit()
-        
-        flash(f'Order added successfully! Total: ₹{float(order.price * order.quantity):.2f}', 'success')
+        flash(f'Order added successfully! Total: ₹{order_total:.2f}', 'success')
         return redirect(url_for('index'))
     
     except Exception as e:
@@ -844,7 +987,8 @@ def shops():
         unpaid_count = 0
         
         for order in orders:
-            order_total = float(order.price * order.quantity)
+            effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+            order_total = float(order.price * effective_quantity)
             paid_amt = float(order.paid_amount) if order.paid_amount else 0
             pending_amt = order_total - paid_amt
             if pending_amt > 0:
@@ -967,7 +1111,8 @@ def orders():
     if pending_only:
         filtered_orders = []
         for order in all_orders:
-            order_total = float(order.price * order.quantity)
+            effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+            order_total = float(order.price * effective_quantity)
             paid_amt = float(order.paid_amount) if order.paid_amount else 0
             pending_amt = order_total - paid_amt
             if pending_amt > 0:
@@ -997,7 +1142,8 @@ def orders():
             orders_by_month[month_key]['dates'][date_str] = {'orders': [], 'date_total': 0, 'date_pending': 0}
         
         orders_by_month[month_key]['dates'][date_str]['orders'].append(order)
-        order_total = float(order.price * order.quantity)
+        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+        order_total = float(order.price * effective_quantity)
         paid_amt = float(order.paid_amount) if order.paid_amount else 0
         pending_amt = order_total - paid_amt
         
@@ -1128,7 +1274,8 @@ def cost_breakdown():
             total_brownies = 0
             for order in orders:
                 order_price = float(order.price)
-                order_quantity = float(order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                order_quantity = float(effective_quantity)
                 # Determine brownie count based on price
                 brownies_per_unit = calculate_brownies_from_price(order_price)
                 brownies_for_order = brownies_per_unit * order_quantity
@@ -1239,8 +1386,8 @@ def api_overall_report():
         # Get all orders
         orders = Order.query.all()
         
-        # Calculate totals
-        total_sales = sum(float(order.price * order.quantity) for order in orders)
+        # Calculate totals using effective quantity (with Combo Pack 1 price correction)
+        total_sales = sum(float(order.price * max(0, (order.quantity or 0) - (order.returns or 0))) for order in orders)
         total_paid = sum(float(order.paid_amount) if order.paid_amount else 0 for order in orders)
         total_pending = total_sales - total_paid
         margin, total_cost = calculate_total_cost_and_profit(orders)
@@ -1255,7 +1402,8 @@ def api_overall_report():
                 shop_name = shop.name if shop else 'Unknown'
                 if shop_name not in shop_dict:
                     shop_dict[shop_name] = {'total': 0, 'paid': 0}
-                shop_dict[shop_name]['total'] += float(order.price * order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                shop_dict[shop_name]['total'] += float(order.price * effective_quantity)
                 shop_dict[shop_name]['paid'] += float(order.paid_amount) if order.paid_amount else 0
             
             shop_totals = sorted(
@@ -1284,7 +1432,8 @@ def api_overall_report():
                 variety_name = variety.name if variety else 'Unknown'
                 if variety_name not in variety_dict:
                     variety_dict[variety_name] = 0
-                variety_dict[variety_name] += float(order.price * order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                variety_dict[variety_name] += float(order.price * effective_quantity)
             
             variety_totals = sorted(
                 [(name, total) for name, total in variety_dict.items()],
@@ -1319,14 +1468,25 @@ def api_overall_report():
             cost_per_brownie = calculate_cost_per_brownie(variety_name)
             
             if cost_per_brownie is not None:
-                # Determine brownie count based on price
-                order_price = float(order.price)
-                order_quantity = float(order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                order_quantity = float(effective_quantity)
                 
-                brownies_per_unit = calculate_brownies_from_price(order_price)
-                brownies_count = brownies_per_unit * order_quantity
-                order_cost = brownies_count * cost_per_brownie
-                order_sales = float(order.price * order.quantity)
+                # For Combo Pack 1, cost_per_brownie is actually cost per combo pack
+                if variety_name.lower() == 'combo pack 1':
+                    # For Combo Pack 1, cost_per_brownie is already the total cost of one combo pack
+                    # So we multiply directly by effective quantity (number of combo packs)
+                    order_cost = cost_per_brownie * effective_quantity
+                    # For sales, always use actual order.price from database (not calculated price)
+                    order_sales = float(order.price * effective_quantity)
+                    # For combo pack, brownies_count = effective_quantity (1 combo pack = 1 unit)
+                    brownies_count = effective_quantity
+                else:
+                    # For regular brownies, determine brownie count based on price
+                    order_price = float(order.price)
+                    brownies_per_unit = calculate_brownies_from_price(order_price)
+                    brownies_count = brownies_per_unit * order_quantity
+                    order_cost = brownies_count * cost_per_brownie
+                    order_sales = float(order.price * effective_quantity)
                 
                 variety_cost_breakdown[variety_name]['sales'] += order_sales
                 variety_cost_breakdown[variety_name]['cost'] += order_cost
@@ -1338,6 +1498,11 @@ def api_overall_report():
         for variety_name, data in variety_cost_breakdown.items():
             profit = data['sales'] - data['cost']
             profit_pct = (profit / data['sales'] * 100) if data['sales'] > 0 else 0
+            # For Combo Pack 1, show cost per combo pack, not per brownie
+            if variety_name.lower() == 'combo pack 1':
+                cost_per_unit = round(data['cost'] / data['quantity'], 2) if data['quantity'] > 0 else 0
+            else:
+                cost_per_unit = round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
             variety_breakdown.append({
                 'name': variety_name,
                 'sales': round(data['sales'], 2),
@@ -1346,7 +1511,7 @@ def api_overall_report():
                 'profit_percentage': round(profit_pct, 2),
                 'quantity': data['quantity'],
                 'brownies_count': round(data['brownies_count'], 2),
-                'cost_per_brownie': round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
+                'cost_per_brownie': cost_per_unit
             })
         
         # Sort by sales descending
@@ -1394,6 +1559,7 @@ def api_profit_by_month():
             month_key = order.delivery_date.strftime('%Y-%m')
             month_label = order.delivery_date.strftime('%B %Y')
             
+            effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
             if month_key not in monthly_data:
                 monthly_data[month_key] = {
                     'label': month_label,
@@ -1403,7 +1569,7 @@ def api_profit_by_month():
                 }
             
             monthly_data[month_key]['orders'].append(order)
-            monthly_data[month_key]['sales'] += float(order.price * order.quantity)
+            monthly_data[month_key]['sales'] += float(order.price * effective_quantity)
         
         # Calculate profit for each month
         profit_by_month = []
@@ -1447,8 +1613,8 @@ def api_monthly_report(year, month):
                 extract('month', Order.delivery_date) == month
             ).all()
         
-        # Calculate totals
-        total_sales = sum(float(order.price * order.quantity) for order in orders)
+        # Calculate totals using effective quantity (with Combo Pack 1 price correction)
+        total_sales = sum(float(order.price * max(0, (order.quantity or 0) - (order.returns or 0))) for order in orders)
         total_paid = sum(float(order.paid_amount) if order.paid_amount else 0 for order in orders)
         total_pending = total_sales - total_paid
         margin, total_cost = calculate_total_cost_and_profit(orders)
@@ -1463,7 +1629,8 @@ def api_monthly_report(year, month):
                 shop_name = shop.name if shop else 'Unknown'
                 if shop_name not in shop_dict:
                     shop_dict[shop_name] = {'total': 0, 'paid': 0}
-                shop_dict[shop_name]['total'] += float(order.price * order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                shop_dict[shop_name]['total'] += float(order.price * effective_quantity)
                 shop_dict[shop_name]['paid'] += float(order.paid_amount) if order.paid_amount else 0
             
             shop_totals = sorted(
@@ -1495,7 +1662,8 @@ def api_monthly_report(year, month):
                 variety_name = variety.name if variety else 'Unknown'
                 if variety_name not in variety_dict:
                     variety_dict[variety_name] = 0
-                variety_dict[variety_name] += float(order.price * order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                variety_dict[variety_name] += float(order.price * effective_quantity)
             
             variety_totals = sorted(
                 [(name, total) for name, total in variety_dict.items()],
@@ -1533,14 +1701,25 @@ def api_monthly_report(year, month):
             cost_per_brownie = calculate_cost_per_brownie(variety_name)
             
             if cost_per_brownie is not None:
-                # Determine brownie count based on price
-                order_price = float(order.price)
-                order_quantity = float(order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                order_quantity = float(effective_quantity)
                 
-                brownies_per_unit = calculate_brownies_from_price(order_price)
-                brownies_count = brownies_per_unit * order_quantity
-                order_cost = brownies_count * cost_per_brownie
-                order_sales = float(order.price * order.quantity)
+                # For Combo Pack 1, cost_per_brownie is actually cost per combo pack
+                if variety_name.lower() == 'combo pack 1':
+                    # For Combo Pack 1, cost_per_brownie is already the total cost of one combo pack
+                    # So we multiply directly by effective quantity (number of combo packs)
+                    order_cost = cost_per_brownie * effective_quantity
+                    # For sales, always use actual order.price from database (sum of all order prices)
+                    order_sales = float(order.price * effective_quantity)
+                    # For combo pack, brownies_count = effective_quantity (1 combo pack = 1 unit)
+                    brownies_count = effective_quantity
+                else:
+                    # For regular brownies, determine brownie count based on price
+                    order_price = float(order.price)
+                    brownies_per_unit = calculate_brownies_from_price(order_price)
+                    brownies_count = brownies_per_unit * order_quantity
+                    order_cost = brownies_count * cost_per_brownie
+                    order_sales = float(order.price * effective_quantity)
                 
                 variety_cost_breakdown[variety_name]['sales'] += order_sales
                 variety_cost_breakdown[variety_name]['cost'] += order_cost
@@ -1552,6 +1731,11 @@ def api_monthly_report(year, month):
         for variety_name, data in variety_cost_breakdown.items():
             profit = data['sales'] - data['cost']
             profit_pct = (profit / data['sales'] * 100) if data['sales'] > 0 else 0
+            # For Combo Pack 1, show cost per combo pack, not per brownie
+            if variety_name.lower() == 'combo pack 1':
+                cost_per_unit = round(data['cost'] / data['quantity'], 2) if data['quantity'] > 0 else 0
+            else:
+                cost_per_unit = round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
             variety_breakdown.append({
                 'name': variety_name,
                 'sales': round(data['sales'], 2),
@@ -1560,7 +1744,7 @@ def api_monthly_report(year, month):
                 'profit_percentage': round(profit_pct, 2),
                 'quantity': data['quantity'],
                 'brownies_count': round(data['brownies_count'], 2),
-                'cost_per_brownie': round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
+                'cost_per_brownie': cost_per_unit
             })
         
         # Sort by sales descending
@@ -1600,7 +1784,8 @@ def shop_bill(id):
     total_pending = 0
     
     for order in all_orders:
-        order_total = float(order.price * order.quantity)
+        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+        order_total = float(order.price * effective_quantity)
         paid_amt = float(order.paid_amount) if order.paid_amount else 0
         pending_amt = order_total - paid_amt
         
@@ -1678,7 +1863,8 @@ def shop_invoice(id):
     total_pending = 0
     
     for order in filtered_orders:
-        order_total = float(order.price * order.quantity)
+        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+        order_total = float(order.price * effective_quantity)
         paid_amt = float(order.paid_amount) if order.paid_amount else 0
         pending_amt = order_total - paid_amt
         
@@ -1714,6 +1900,7 @@ def edit_order(id):
             variety_id = request.form.get('variety_id', type=int)
             shop_id = request.form.get('shop_id', type=int)
             quantity = request.form.get('quantity', type=int)
+            returns = request.form.get('returns', type=int) or 0
             price = request.form.get('price', type=float)
             delivery_date_str = request.form.get('delivery_date')
             payment_status = request.form.get('payment_status', default='unpaid')
@@ -1728,6 +1915,13 @@ def edit_order(id):
             if quantity <= 0 or price <= 0:
                 flash('Quantity and price must be positive numbers', 'error')
                 return redirect(url_for('edit_order', id=id))
+            
+            if returns < 0 or returns > quantity:
+                flash('Returns must be between 0 and quantity', 'error')
+                return redirect(url_for('edit_order', id=id))
+            
+            # Calculate effective quantity (quantity - returns)
+            effective_quantity = max(0, quantity - returns)
             
             # Parse delivery date
             try:
@@ -1754,21 +1948,23 @@ def edit_order(id):
                     delivery_date,
                     payment_status,
                     Decimal(str(paid_amount)),
-                    Decimal(str(courier_price))
+                    Decimal(str(courier_price)),
+                    returns
                 )
-                total = float(Decimal(str(price)) * quantity)
+                total = float(Decimal(str(price)) * effective_quantity)
             else:
                 # For SQLite, update the object and commit
                 order.variety_id = variety_id
                 order.shop_id = shop_id
                 order.quantity = quantity
+                order.returns = returns
                 order.price = Decimal(str(price))
                 order.delivery_date = delivery_date
                 order.payment_status = payment_status
                 order.paid_amount = Decimal(str(paid_amount))
                 order.courier_price = Decimal(str(courier_price))
                 db_session.commit()
-                total = float(order.price * order.quantity)
+                total = float(order.price * effective_quantity)
             
             flash(f'Order updated successfully! Total: ₹{total:.2f}', 'success')
             return redirect(url_for('orders'))
@@ -1791,8 +1987,11 @@ def mark_order_paid(id):
     try:
         order = Order.query.get_or_404(id)
         
-        # Calculate total amount
-        total_amount = float(order.price * order.quantity)
+        # Calculate effective quantity (quantity - returns)
+        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+        
+        # Calculate total amount based on effective quantity
+        total_amount = float(order.price * effective_quantity)
         
         # Update payment status to paid
         if USE_GOOGLE_SHEETS:
@@ -1807,7 +2006,9 @@ def mark_order_paid(id):
                 order.price,
                 order.delivery_date,
                 'paid',
-                Decimal(str(total_amount))
+                Decimal(str(total_amount)),
+                order.courier_price or 0,
+                order.returns or 0
             )
         else:
             # For SQLite, update the object and commit
@@ -1849,7 +2050,9 @@ def mark_all_orders_paid(shop_id):
         total_amount = 0
         
         for order in all_orders:
-            order_total = float(order.price * order.quantity)
+            # Calculate effective quantity (quantity - returns)
+            effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+            order_total = float(order.price * effective_quantity)
             paid_amt = float(order.paid_amount) if order.paid_amount else 0
             pending_amt = order_total - paid_amt
             
@@ -1866,7 +2069,8 @@ def mark_all_orders_paid(shop_id):
             from google_sheets import get_gs_db
             gs = get_gs_db()
             for order in unpaid_orders:
-                order_total = float(order.price * order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                order_total = float(order.price * effective_quantity)
                 gs.update_order(
                     order.id,
                     order.variety_id,
@@ -1875,11 +2079,14 @@ def mark_all_orders_paid(shop_id):
                     order.price,
                     order.delivery_date,
                     'paid',
-                    Decimal(str(order_total))
+                    Decimal(str(order_total)),
+                    order.courier_price or 0,
+                    order.returns or 0
                 )
         else:
             for order in unpaid_orders:
-                order_total = float(order.price * order.quantity)
+                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+                order_total = float(order.price * effective_quantity)
                 order.payment_status = 'paid'
                 order.paid_amount = Decimal(str(order_total))
             db_session.commit()

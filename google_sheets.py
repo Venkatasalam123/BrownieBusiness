@@ -501,21 +501,60 @@ class GoogleSheetsDB:
         for i, row in enumerate(rows[1:], start=2):  # Skip header
             if len(row) >= 8:
                 try:
-                    # Handle backward compatibility: courier_price is new, created_at was at index 7
-                    # If row has 8 columns, it's old format (no courier_price), created_at at index 7
-                    # If row has 9+ columns, it's new format, courier_price at index 7, created_at at index 8
-                    courier_price_idx = 7 if len(row) > 8 else None
-                    created_at_idx = 8 if len(row) > 8 else 7
+                    # Handle backward compatibility:
+                    # Old format (8 cols): variety_id, shop_id, quantity, price, delivery_date, payment_status, paid_amount, created_at
+                    # Medium format (9 cols): adds courier_price before created_at
+                    # New format (10 cols): adds returns after quantity
+                    # Current format (10 cols): variety_id, shop_id, quantity, returns, price, delivery_date, payment_status, paid_amount, courier_price, created_at
+                    
+                    # Detect format based on column count
+                    if len(row) >= 10:
+                        # New format with returns
+                        variety_id = int(row[0]) if row[0] else None
+                        shop_id = int(row[1]) if row[1] else None
+                        quantity = int(float(row[2])) if row[2] else 0
+                        returns = int(float(row[3])) if row[3] else 0
+                        price = Decimal(str(row[4])) if row[4] else Decimal('0')
+                        delivery_date_idx = 5
+                        payment_status_idx = 6
+                        paid_amount_idx = 7
+                        courier_price_idx = 8
+                        created_at_idx = 9
+                    elif len(row) == 9:
+                        # Medium format with courier_price but no returns
+                        variety_id = int(row[0]) if row[0] else None
+                        shop_id = int(row[1]) if row[1] else None
+                        quantity = int(float(row[2])) if row[2] else 0
+                        returns = 0  # Default for old rows
+                        price = Decimal(str(row[3])) if row[3] else Decimal('0')
+                        delivery_date_idx = 4
+                        payment_status_idx = 5
+                        paid_amount_idx = 6
+                        courier_price_idx = 7
+                        created_at_idx = 8
+                    else:
+                        # Old format (8 cols) without courier_price and returns
+                        variety_id = int(row[0]) if row[0] else None
+                        shop_id = int(row[1]) if row[1] else None
+                        quantity = int(float(row[2])) if row[2] else 0
+                        returns = 0  # Default for old rows
+                        price = Decimal(str(row[3])) if row[3] else Decimal('0')
+                        delivery_date_idx = 4
+                        payment_status_idx = 5
+                        paid_amount_idx = 6
+                        courier_price_idx = None
+                        created_at_idx = 7
                     
                     orders.append({
                         'id': i,
-                        'variety_id': int(row[0]) if row[0] else None,
-                        'shop_id': int(row[1]) if row[1] else None,
-                        'quantity': int(float(row[2])) if row[2] else 0,  # Convert to float first to handle "5.0" strings
-                        'price': Decimal(str(row[3])) if row[3] else Decimal('0'),
-                        'delivery_date': datetime.strptime(row[4], '%Y-%m-%d').date() if row[4] else None,
-                        'payment_status': row[5] if len(row) > 5 else 'unpaid',
-                        'paid_amount': Decimal(str(row[6])) if len(row) > 6 and row[6] else Decimal('0'),
+                        'variety_id': variety_id,
+                        'shop_id': shop_id,
+                        'quantity': quantity,
+                        'returns': returns,
+                        'price': price,
+                        'delivery_date': datetime.strptime(row[delivery_date_idx], '%Y-%m-%d').date() if len(row) > delivery_date_idx and row[delivery_date_idx] else None,
+                        'payment_status': row[payment_status_idx] if len(row) > payment_status_idx else 'unpaid',
+                        'paid_amount': Decimal(str(row[paid_amount_idx])) if len(row) > paid_amount_idx and row[paid_amount_idx] else Decimal('0'),
                         'courier_price': Decimal(str(row[courier_price_idx])) if courier_price_idx is not None and len(row) > courier_price_idx and row[courier_price_idx] else Decimal('0'),
                         'created_at': (datetime.strptime(row[created_at_idx], '%Y-%m-%d %H:%M:%S').replace(tzinfo=IST) if len(row) > created_at_idx and row[created_at_idx] else get_ist_now())
                     })
@@ -524,12 +563,13 @@ class GoogleSheetsDB:
                     continue
         return orders
     
-    def add_order(self, variety_id, shop_id, quantity, price, delivery_date, payment_status='unpaid', paid_amount=0, courier_price=0):
+    def add_order(self, variety_id, shop_id, quantity, price, delivery_date, payment_status='unpaid', paid_amount=0, courier_price=0, returns=0):
         """Add a new order"""
         values = [[
             str(variety_id),
             str(shop_id),
             str(quantity),
+            str(returns or 0),
             str(price),
             delivery_date.strftime('%Y-%m-%d') if isinstance(delivery_date, date) else str(delivery_date),
             payment_status,
@@ -539,12 +579,13 @@ class GoogleSheetsDB:
         ]]
         self._append_sheet(SHEET_ORDERS, values)
     
-    def update_order(self, row_id, variety_id, shop_id, quantity, price, delivery_date, payment_status, paid_amount, courier_price=0):
+    def update_order(self, row_id, variety_id, shop_id, quantity, price, delivery_date, payment_status, paid_amount, courier_price=0, returns=0):
         """Update an order"""
         values = [
             str(variety_id),
             str(shop_id),
             str(quantity),
+            str(returns or 0),
             str(price),
             delivery_date.strftime('%Y-%m-%d') if isinstance(delivery_date, date) else str(delivery_date),
             payment_status,
@@ -634,7 +675,7 @@ class GoogleSheetsDB:
             
             orders = self._read_sheet(SHEET_ORDERS)
             if not orders:
-                self._write_sheet(SHEET_ORDERS, [['Variety ID', 'Shop ID', 'Quantity', 'Price', 'Delivery Date', 'Payment Status', 'Paid Amount', 'Courier Price', 'Created At']], 'A1')
+                self._write_sheet(SHEET_ORDERS, [['Variety ID', 'Shop ID', 'Quantity', 'Returns', 'Price', 'Delivery Date', 'Payment Status', 'Paid Amount', 'Courier Price', 'Created At']], 'A1')
             
             ingredient_prices = self._read_sheet(SHEET_INGREDIENT_PRICES)
             if not ingredient_prices:

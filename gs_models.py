@@ -495,6 +495,7 @@ class Order:
     variety_id = Column('variety_id')
     shop_id = Column('shop_id')
     quantity = Column('quantity')
+    returns = Column('returns')
     price = Column('price')
     delivery_date = Column('delivery_date')
     payment_status = Column('payment_status')
@@ -503,12 +504,13 @@ class Order:
     created_at = Column('created_at')
     
     def __init__(self, id=None, variety_id=None, shop_id=None, quantity=None, 
-                 price=None, delivery_date=None, payment_status='unpaid', 
+                 returns=0, price=None, delivery_date=None, payment_status='unpaid', 
                  paid_amount=0, courier_price=0, created_at=None):
         self.id = id
         self.variety_id = variety_id
         self.shop_id = shop_id
         self.quantity = quantity
+        self.returns = returns or 0
         self.price = price
         self.delivery_date = delivery_date
         self.payment_status = payment_status
@@ -534,18 +536,21 @@ class Order:
         return f'<Order {self.id}>'
     
     def to_dict(self):
+        effective_quantity = max(0, (self.quantity or 0) - (self.returns or 0))
         return {
             'id': self.id,
             'variety_id': self.variety_id,
             'shop_id': self.shop_id,
-            'quantity': self.quantity,
+            'quantity': self.quantity or 0,
+            'returns': self.returns or 0,
+            'effective_quantity': effective_quantity,
             'price': float(self.price) if self.price else 0.0,
             'delivery_date': self.delivery_date.isoformat() if self.delivery_date else None,
             'payment_status': self.payment_status,
             'paid_amount': float(self.paid_amount) if self.paid_amount else 0.0,
             'courier_price': float(self.courier_price) if self.courier_price else 0.0,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'total': float(self.price * self.quantity) if self.price and self.quantity else 0.0
+            'total': float(self.price * effective_quantity) if self.price and effective_quantity else 0.0
         }
 
 

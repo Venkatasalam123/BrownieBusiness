@@ -94,6 +94,7 @@
                                                 <th><i class="fas fa-store me-2"></i>Shop/Customer</th>
                                                 <th><i class="fas fa-layer-group me-2"></i>Variety</th>
                                                 <th><i class="fas fa-hashtag me-2"></i>Qty</th>
+                                                <th><i class="fas fa-undo me-2"></i>Returns</th>
                                                 <th><i class="fas fa-rupee-sign me-2"></i>Price/Unit</th>
                                                 <th><i class="fas fa-calculator me-2"></i>Total</th>
                                                 <th><i class="fas fa-money-bill-wave me-2"></i>Payment</th>
@@ -104,7 +105,9 @@
                                         </thead>
                                         <tbody>
                                             {% for order in orders %}
-                                            {% set order_total = order.price * order.quantity %}
+                                            {% set returns = order.returns if order.returns else 0 %}
+                                            {% set effective_qty = (order.quantity or 0) - returns %}
+                                            {% set order_total = order.price * effective_qty %}
                                             {% set payment_status = order.payment_status if order.payment_status else 'unpaid' %}
                                             {% set paid_amt = order.paid_amount if order.paid_amount else 0 %}
                                             {% set pending_amt = order_total - paid_amt %}
@@ -112,6 +115,14 @@
                                                 <td><strong>{{ order.shop.name }}</strong></td>
                                                 <td>{{ order.variety.name }}</td>
                                                 <td>{{ order.quantity }}</td>
+                                                <td>
+                                                    {% if returns > 0 %}
+                                                        <span class="badge bg-warning">{{ returns }}</span>
+                                                        <br><small class="text-muted">Effective: {{ effective_qty }}</small>
+                                                    {% else %}
+                                                        <span class="text-muted">0</span>
+                                                    {% endif %}
+                                                </td>
                                                 <td>₹{{ "%.2f"|format(order.price) }}</td>
                                                 <td><strong>₹{{ "%.2f"|format(order_total) }}</strong></td>
                                                 <td>

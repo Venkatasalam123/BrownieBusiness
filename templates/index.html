@@ -44,6 +44,14 @@
                     </div>
 
                     <div class="mb-3">
+                        <label for="returns" class="form-label">
+                            <i class="fas fa-undo me-2"></i>Returns
+                        </label>
+                        <input type="number" class="form-control form-control-lg" id="returns" name="returns" min="0" value="0">
+                        <small class="form-text text-muted">Number of items returned (will be subtracted from quantity for final amount)</small>
+                    </div>
+
+                    <div class="mb-3">
                         <label for="price" class="form-label">
                             <i class="fas fa-rupee-sign me-2"></i>Price (₹) <span class="text-danger">*</span>
                         </label>
@@ -105,6 +113,8 @@
         // Auto-fill price when variety is selected
         const varietySelect = document.getElementById('variety_id');
         const priceInput = document.getElementById('price');
+        const quantityInput = document.getElementById('quantity');
+        const returnsInput = document.getElementById('returns');
         
         varietySelect.addEventListener('change', function() {
             const selectedOption = this.options[this.selectedIndex];
@@ -113,6 +123,21 @@
                 priceInput.value = defaultPrice;
             }
         });
+        
+        // Ensure returns doesn't exceed quantity
+        if (returnsInput) {
+            returnsInput.addEventListener('input', function() {
+                const quantity = parseFloat(quantityInput.value || 0);
+                const returns = parseFloat(returnsInput.value || 0);
+                if (returns > quantity) {
+                    returnsInput.value = quantity;
+                    alert('Returns cannot exceed quantity');
+                }
+                if (returns < 0) {
+                    returnsInput.value = 0;
+                }
+            });
+        }
     });
 </script>
 {% endblock %}
