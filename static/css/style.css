@@ -462,6 +462,30 @@ main {
     padding: var(--spacing-xs);
     min-width: 44px;
     min-height: 44px;
+    border: 1px solid var(--gray-300);
+    border-radius: var(--radius);
+    background: transparent;
+    transition: all 0.2s ease;
+}
+
+.navbar-toggler:hover {
+    background: var(--gray-100);
+    border-color: var(--primary);
+}
+
+.navbar-toggler:focus {
+    box-shadow: 0 0 0 3px var(--primary-light);
+    outline: none;
+}
+
+.navbar-toggler-icon {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%2833, 37, 41, 0.75%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+    width: 1.5em;
+    height: 1.5em;
+    display: inline-block;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 100%;
 }
 
 .nav-link {
@@ -687,12 +711,21 @@ a {
 
 /* Optimize navbar for mobile */
 @media (max-width: 991px) {
+    .navbar-toggler {
+        display: block !important;
+    }
+    
     .navbar-collapse {
         background: white;
         margin-top: var(--spacing-xs);
         padding: var(--spacing-sm);
         border-radius: var(--radius);
         box-shadow: var(--shadow-md);
+        transition: all 0.3s ease;
+    }
+    
+    .navbar-collapse.collapsing {
+        transition: height 0.35s ease;
     }
     
     .navbar-nav {
@@ -841,6 +874,14 @@ a {
 
 /* Desktop (992px+) */
 @media (min-width: 992px) {
+    .navbar-toggler {
+        display: none !important;
+    }
+    
+    .navbar-collapse {
+        display: flex !important;
+    }
+    
     main {
         padding: var(--spacing-lg);
     }

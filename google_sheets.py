@@ -439,22 +439,28 @@ class GoogleSheetsDB:
         varieties = []
         for i, row in enumerate(rows[1:], start=2):  # Skip header
             if len(row) >= 2:
+                combo_pack_config = row[2] if len(row) > 2 and row[2] else None
                 varieties.append({
                     'id': i,
                     'name': row[0],
-                    'default_price': Decimal(str(row[1])) if len(row) > 1 else Decimal('25.00')
+                    'default_price': Decimal(str(row[1])) if len(row) > 1 else Decimal('25.00'),
+                    'combo_pack_config': combo_pack_config
                 })
         return varieties
     
-    def add_variety(self, name, default_price):
+    def add_variety(self, name, default_price, combo_pack_config=None):
         """Add a new variety"""
-        values = [[name, str(default_price)]]
+        combo_config_str = combo_pack_config if combo_pack_config else ''
+        values = [[name, str(default_price), combo_config_str]]
         self._append_sheet(SHEET_VARIETIES, values)
     
-    def update_variety(self, row_id, name, default_price):
+    def update_variety(self, row_id, name, default_price, combo_pack_config=None):
         """Update a variety"""
-        values = [name, str(default_price)]
+        combo_config_str = combo_pack_config if combo_pack_config else ''
+        values = [name, str(default_price), combo_config_str]
         self._update_row(SHEET_VARIETIES, row_id, values)
+        # Clear cache for varieties to ensure fresh data
+        self._clear_cache('Varieties')
     
     def delete_variety(self, row_id):
         """Delete a variety"""
@@ -667,7 +673,13 @@ class GoogleSheetsDB:
             # Check if sheets have headers and create them if needed
             varieties = self._read_sheet(SHEET_VARIETIES)
             if not varieties:
-                self._write_sheet(SHEET_VARIETIES, [['Name', 'Default Price']], 'A1')
+                self._write_sheet(SHEET_VARIETIES, [['Name', 'Default Price', 'Combo Pack Config']], 'A1')
+            elif len(varieties[0]) < 3:
+                # Update existing header if it doesn't have Combo Pack Config column
+                if len(varieties[0]) == 2:
+                    # Add the new column header
+                    header = varieties[0] + ['Combo Pack Config']
+                    self._write_sheet(SHEET_VARIETIES, [header], 'A1')
             
             shops = self._read_sheet(SHEET_SHOPS)
             if not shops:
@@ -691,6 +703,8 @@ class GoogleSheetsDB:
                     ['Maida/Ragi', '50', '1kg', '1', 'kg'],
                     ['Mango Compound', '205', '500g', '500', 'g'],
                     ['Pista Compound', '205', '500g', '500', 'g'],
+                    ['Strawberry Compound', '200', '500g', '500', 'g'],
+                    ['Pineapple Compound', '200', '500g', '500', 'g'],
                     ['Pista Nuts', '445', '250g', '250', 'g'],
                     ['Milk Compound', '190', '500g', '500', 'g'],
                     ['White Compound', '205', '500g', '500', 'g'],

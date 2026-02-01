@@ -65,7 +65,8 @@ class VarietyQuery:
     def all(self):
         gs = get_gs_db()
         varieties_data = gs.get_varieties()
-        results = [Variety(id=v['id'], name=v['name'], default_price=v['default_price']) 
+        results = [Variety(id=v['id'], name=v['name'], default_price=v['default_price'], 
+                          combo_pack_config=v.get('combo_pack_config')) 
                    for v in varieties_data]
         
         # Apply sorting
@@ -449,20 +450,66 @@ class Variety:
     name = Column('name')
     id = Column('id')
     default_price = Column('default_price')
+    combo_pack_config = Column('combo_pack_config')
     
-    def __init__(self, id=None, name=None, default_price=None):
+    def __init__(self, id=None, name=None, default_price=None, combo_pack_config=None):
         self.id = id
         self.name = name
         self.default_price = default_price
+        self.combo_pack_config = combo_pack_config
     
     def __repr__(self):
         return f'<Variety {self.name}>'
+    
+    def get_combo_pack_varieties(self):
+        """Get list of variety items in this combo pack with quantities
+        Returns list of dicts: [{"id": 1, "quantity": 2}, {"id": 2, "quantity": 1}]
+        For backward compatibility, handles multiple formats:
+        - Old format: [1, 2, 3] (list of integers)
+        - Medium format: [{"id": 1, "quantity": 2}] (list of dicts)
+        - New format: {"items": [...], "extra_packing_cost": 5.0} (object with items and cost)
+        """
+        if self.combo_pack_config:
+            try:
+                import json
+                data = json.loads(self.combo_pack_config)
+                # Check if it's new format (object with items and extra_packing_cost)
+                if isinstance(data, dict) and 'items' in data:
+                    return data.get('items', [])
+                # Check if it's old format (list of integers)
+                elif isinstance(data, list) and data and isinstance(data[0], int):
+                    # Convert old format to new format
+                    return [{"id": vid, "quantity": 1} for vid in data]
+                # Medium format (list of dicts)
+                elif isinstance(data, list):
+                    return data
+            except:
+                return []
+        return []
+    
+    def get_extra_packing_cost(self):
+        """Get extra packing cost for combo pack, defaults to 5.0"""
+        if self.combo_pack_config:
+            try:
+                import json
+                data = json.loads(self.combo_pack_config)
+                # Check if it's new format (object with items and extra_packing_cost)
+                if isinstance(data, dict) and 'extra_packing_cost' in data:
+                    return float(data.get('extra_packing_cost', 5.0))
+            except:
+                pass
+        return 5.0  # Default value
+    
+    def is_combo_pack(self):
+        """Check if this variety is a combo pack"""
+        return self.combo_pack_config is not None and self.combo_pack_config.strip() != ''
     
     def to_dict(self):
         return {
             'id': self.id,
             'name': self.name,
-            'default_price': float(self.default_price) if self.default_price else 0.0
+            'default_price': float(self.default_price) if self.default_price else 0.0,
+            'combo_pack_config': self.get_combo_pack_varieties()
         }
 
 

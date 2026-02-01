@@ -86,6 +86,8 @@ def _initialize_default_ingredient_prices():
         {'name': 'Maida/Ragi', 'price': 50, 'unit': '1kg', 'package_size': 1, 'package_unit': 'kg'},
         {'name': 'Mango Compound', 'price': 205, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
         {'name': 'Pista Compound', 'price': 205, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'Strawberry Compound', 'price': 200, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'Pineapple Compound', 'price': 200, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
         {'name': 'Pista Nuts', 'price': 445, 'unit': '250g', 'package_size': 250, 'package_unit': 'g'},
         {'name': 'Milk Compound', 'price': 190, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
         {'name': 'White Compound', 'price': 205, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
@@ -135,159 +137,37 @@ def get_ingredient_price(name):
 # The calculated price from get_cost_breakdown() should only be used for cost calculations, not sales
 
 
+def get_brownies_in_combo_pack(variety):
+    """Get the total number of brownies in a combo pack variety"""
+    if not variety or not variety.is_combo_pack():
+        return 0
+    
+    combo_items = variety.get_combo_pack_varieties()
+    total_brownies = 0
+    
+    for item in combo_items:
+        if isinstance(item, dict):
+            quantity = item.get('quantity', 1)
+        else:
+            # Backward compatibility: old format was just IDs
+            quantity = 1
+        total_brownies += quantity
+    
+    return total_brownies
+
+
 def calculate_cost_per_brownie(variety_name):
-    """Calculate the cost per brownie based on variety and ingredient prices"""
+    """Calculate the cost per brownie based on variety and ingredient prices
+    Uses get_cost_breakdown() to ensure consistency with ingredients page display
+    """
     if IngredientPrice is None:
         return None
     
-    # Handle Combo Pack 1 specially - use the calculated cost from get_cost_breakdown
-    if variety_name.lower() == 'combo pack 1':
-        breakdown = get_cost_breakdown(variety_name)
-        if breakdown:
-            # For Combo Pack 1, cost_per_brownie is actually the total combo pack cost
-            return breakdown.get('cost_per_brownie', None)
-        return None
-    
-    # Ingredients needed for 16 brownies
-    # Base ingredients (for all varieties)
-    butter_g = 235
-    egg_count = 4
-    white_sugar_g = 52
-    brown_sugar_g = 52
-    vanilla_essence_ml = 4
-    maida_ragi_g = 125
-    
-    # Get base ingredient prices
-    butter = get_ingredient_price('Butter')
-    egg = get_ingredient_price('Egg')
-    white_sugar = get_ingredient_price('White Sugar')
-    brown_sugar = get_ingredient_price('Brown Sugar')
-    vanilla = get_ingredient_price('Vanilla Essence')
-    maida = get_ingredient_price('Maida/Ragi')
-    
-    total_cost = 0
-    
-    # Calculate butter cost
-    if butter:
-        price_per_g = butter.get_price_per_gram()
-        if price_per_g:
-            total_cost += butter_g * price_per_g
-    
-    # Calculate egg cost
-    if egg:
-        price_per_piece = egg.get_price_per_piece()
-        if price_per_piece:
-            total_cost += egg_count * price_per_piece
-    
-    # Calculate white sugar cost
-    if white_sugar:
-        price_per_g = white_sugar.get_price_per_gram()
-        if price_per_g:
-            total_cost += white_sugar_g * price_per_g
-    
-    # Calculate brown sugar cost
-    if brown_sugar:
-        price_per_g = brown_sugar.get_price_per_gram()
-        if price_per_g:
-            total_cost += brown_sugar_g * price_per_g
-    
-    # Calculate vanilla essence cost
-    if vanilla:
-        price_per_ml = vanilla.get_price_per_ml()
-        if price_per_ml:
-            total_cost += vanilla_essence_ml * price_per_ml
-    
-    # Calculate maida/ragi cost
-    if maida:
-        price_per_g = maida.get_price_per_gram()
-        if price_per_g:
-            total_cost += maida_ragi_g * price_per_g
-    
-    # Handle variety-specific ingredients
-    variety_lower = variety_name.lower()
-    compound_g = 400
-    
-    if 'mango' in variety_lower:
-        mango_compound = get_ingredient_price('Mango Compound')
-        if mango_compound:
-            price_per_g = mango_compound.get_price_per_gram()
-            if price_per_g:
-                total_cost += compound_g * price_per_g
-    elif 'pista' in variety_lower:
-        pista_compound = get_ingredient_price('Pista Compound')
-        pista_nuts = get_ingredient_price('Pista Nuts')
-        if pista_compound:
-            price_per_g = pista_compound.get_price_per_gram()
-            if price_per_g:
-                total_cost += compound_g * price_per_g
-        if pista_nuts:
-            price_per_g = pista_nuts.get_price_per_gram()
-            if price_per_g:
-                total_cost += 16 * price_per_g  # 16g pista nuts for 16 brownies
-    elif 'ragi' in variety_lower:
-        # Ragi brownie: uses dark compound + milk compound + white compound
-        dark_compound = get_ingredient_price('Dark Compound')
-        milk_compound = get_ingredient_price('Milk Compound')
-        white_compound = get_ingredient_price('White Compound')
-        if dark_compound:
-            price_per_g = dark_compound.get_price_per_gram()
-            if price_per_g:
-                total_cost += compound_g * price_per_g
-        if milk_compound:
-            price_per_g = milk_compound.get_price_per_gram()
-            if price_per_g:
-                total_cost += 25 * price_per_g  # 25g milk compound for 16 brownies
-        if white_compound:
-            price_per_g = white_compound.get_price_per_gram()
-            if price_per_g:
-                total_cost += 25 * price_per_g  # 25g white compound for 16 brownies
-    else:
-        # Default: dark compound
-        dark_compound = get_ingredient_price('Dark Compound')
-        if dark_compound:
-            price_per_g = dark_compound.get_price_per_gram()
-            if price_per_g:
-                total_cost += compound_g * price_per_g
-    
-    # Add fixed costs (oven charges and miscellaneous) for 16 brownies
-    oven_charges = get_ingredient_price('Oven Charges')
-    if oven_charges:
-        price_per_batch = oven_charges.get_price_per_piece()
-        if price_per_batch:
-            total_cost += price_per_batch  # Already for 16 brownies batch
-    
-    miscellaneous = get_ingredient_price('Miscellaneous')
-    if miscellaneous:
-        price_per_batch = miscellaneous.get_price_per_piece()
-        if price_per_batch:
-            total_cost += price_per_batch  # Already for 16 brownies batch
-    else:
-        # Fallback: Add miscellaneous cost directly if not in database
-        total_cost += 15.0  # ₹15 for 16 brownies
-    
-    # Add packing cost (₹1.8 per brownie × 16 = ₹28.8 for 16 brownies)
-    packing = get_ingredient_price('Packing')
-    if packing:
-        price_per_batch = packing.get_price_per_piece()
-        if price_per_batch:
-            total_cost += price_per_batch  # Already for 16 brownies batch
-    else:
-        # Fallback: Add packing cost directly if not in database
-        total_cost += 28.8  # ₹1.8 per brownie × 16
-    
-    # Add transportation cost (₹20 for 16 brownies)
-    transportation = get_ingredient_price('Transportation')
-    if transportation:
-        price_per_batch = transportation.get_price_per_piece()
-        if price_per_batch:
-            total_cost += price_per_batch  # Already for 16 brownies batch
-    else:
-        # Fallback: Add transportation cost directly if not in database
-        total_cost += 20.0  # ₹20 for 16 brownies
-    
-    # Cost for 16 brownies, so divide by 16 to get cost per brownie
-    cost_per_brownie = total_cost / 16.0
-    return cost_per_brownie
+    # Use get_cost_breakdown to get the exact same calculation as ingredients page
+    breakdown = get_cost_breakdown(variety_name)
+    if breakdown:
+        return breakdown.get('cost_per_brownie', None)
+    return None
 
 
 def get_cost_breakdown(variety_name):
@@ -295,35 +175,11 @@ def get_cost_breakdown(variety_name):
     if IngredientPrice is None:
         return None
     
-    # Handle Combo Pack 1 specially
-    if variety_name.lower() == 'combo pack 1':
-        # Calculate cost for Combo Pack 1 = Classic Brownie + Mango Brownie + Pista Brownie + 3.5 (extra packing)
-        # Find varieties dynamically (case-insensitive)
-        all_varieties = Variety.query.all()
-        classic_name = None
-        mango_name = None
-        pista_name = None
-        
-        for v in all_varieties:
-            v_lower = v.name.lower()
-            if 'classic' in v_lower and 'brownie' in v_lower and classic_name is None:
-                classic_name = v.name
-            elif 'mango' in v_lower and 'brownie' in v_lower and mango_name is None:
-                mango_name = v.name
-            elif 'pista' in v_lower and 'brownie' in v_lower and pista_name is None:
-                pista_name = v.name
-        
-        # Fallback to exact names if not found
-        if not classic_name:
-            classic_name = 'Classic Brownie'
-        if not mango_name:
-            mango_name = 'Mango Brownie'
-        if not pista_name:
-            pista_name = 'Pista Brownie'
-        
-        classic_breakdown = get_cost_breakdown(classic_name)
-        mango_breakdown = get_cost_breakdown(mango_name)
-        pista_breakdown = get_cost_breakdown(pista_name)
+    # Check if this is a combo pack
+    variety = Variety.query.filter_by(name=variety_name).first()
+    if variety and variety.is_combo_pack():
+        # Get the variety IDs in this combo pack
+        combo_variety_ids = variety.get_combo_pack_varieties()
         
         breakdown = {
             'variety': variety_name,
@@ -332,47 +188,56 @@ def get_cost_breakdown(variety_name):
             'cost_per_brownie': 0
         }
         
-        extra_packing_cost = 5.0
+        # Get extra packing cost from variety config (defaults to 5.0)
+        extra_packing_cost = variety.get_extra_packing_cost()
         combo_cost = 0.0
+        total_brownies_in_combo = 0  # Count total brownies in combo pack
         
-        # Add Classic Brownie cost
-        if classic_breakdown:
-            classic_cost = classic_breakdown.get('cost_per_brownie', 0)
-            combo_cost += classic_cost
-            breakdown['ingredients'].append({
-                'name': classic_name,
-                'quantity': '1 brownie',
-                'package_price': 0,
-                'package_size': '1 brownie',
-                'price_per_unit': classic_cost,
-                'cost': classic_cost
-            })
+        # Add cost for each brownie in the combo pack (with quantities)
+        for item in combo_variety_ids:
+            # Handle both old format (int) and new format (dict)
+            if isinstance(item, dict):
+                variety_id = item.get('id')
+                quantity = item.get('quantity', 1)
+            else:
+                # Backward compatibility: old format was just IDs
+                variety_id = item
+                quantity = 1
+            
+            total_brownies_in_combo += quantity  # Count brownies
+            
+            combo_variety = Variety.query.get(variety_id)
+            if combo_variety:
+                # Skip if it's also a combo pack (avoid recursion)
+                if not combo_variety.is_combo_pack():
+                    brownie_breakdown = get_cost_breakdown(combo_variety.name)
+                    if brownie_breakdown:
+                        brownie_cost = brownie_breakdown.get('cost_per_brownie', 0)
+                        # Subtract ₹1 miscellaneous cost (we'll add it separately for all brownies in combo)
+                        brownie_cost_without_misc = brownie_cost - 1.0
+                        total_item_cost = brownie_cost_without_misc * quantity
+                        combo_cost += total_item_cost
+                        breakdown['ingredients'].append({
+                            'name': combo_variety.name,
+                            'quantity': f'{quantity} brownie{"s" if quantity > 1 else ""}',
+                            'package_price': 0,
+                            'package_size': '1 brownie',
+                            'price_per_unit': brownie_cost_without_misc,
+                            'cost': total_item_cost
+                        })
         
-        # Add Mango Brownie cost
-        if mango_breakdown:
-            mango_cost = mango_breakdown.get('cost_per_brownie', 0)
-            combo_cost += mango_cost
-            breakdown['ingredients'].append({
-                'name': mango_name,
-                'quantity': '1 brownie',
-                'package_price': 0,
-                'package_size': '1 brownie',
-                'price_per_unit': mango_cost,
-                'cost': mango_cost
-            })
-        
-        # Add Pista Brownie cost
-        if pista_breakdown:
-            pista_cost = pista_breakdown.get('cost_per_brownie', 0)
-            combo_cost += pista_cost
-            breakdown['ingredients'].append({
-                'name': pista_name,
-                'quantity': '1 brownie',
-                'package_price': 0,
-                'package_size': '1 brownie',
-                'price_per_unit': pista_cost,
-                'cost': pista_cost
-            })
+        # Add variety miscellaneous cost (₹1 per brownie in combo pack)
+        # This is calculated based on total number of brownies in the combo pack
+        variety_misc_cost = total_brownies_in_combo * 1.0  # ₹1 per brownie
+        combo_cost += variety_misc_cost
+        breakdown['ingredients'].append({
+            'name': 'Variety Miscellaneous Cost',
+            'quantity': f'{total_brownies_in_combo} brownie{"s" if total_brownies_in_combo > 1 else ""} (₹1 per brownie)',
+            'package_price': 0,
+            'package_size': '1 brownie',
+            'price_per_unit': 1.0,
+            'cost': variety_misc_cost
+        })
         
         # Add extra packing cost
         combo_cost += extra_packing_cost
@@ -502,6 +367,12 @@ def get_cost_breakdown(variety_name):
     if 'mango' in variety_lower:
         compound = get_ingredient_price('Mango Compound')
         compound_name = 'Mango Compound'
+    elif 'strawberry' in variety_lower:
+        compound = get_ingredient_price('Strawberry Compound')
+        compound_name = 'Strawberry Compound'
+    elif 'pineapple' in variety_lower:
+        compound = get_ingredient_price('Pineapple Compound')
+        compound_name = 'Pineapple Compound'
     elif 'pista' in variety_lower:
         compound = get_ingredient_price('Pista Compound')
         compound_name = 'Pista Compound'
@@ -659,6 +530,18 @@ def get_cost_breakdown(variety_name):
         })
     breakdown['total_cost_16_brownies'] += transportation_cost
     
+    # Add variety miscellaneous cost (₹1 per brownie × 16 = ₹16 for 16 brownies)
+    variety_misc_cost = 16.0  # ₹1 per brownie
+    breakdown['ingredients'].append({
+        'name': 'Variety Miscellaneous Cost',
+        'quantity': '16 brownies (₹1 per brownie)',
+        'package_price': 16.0,
+        'package_size': '16 brownies',
+        'price_per_unit': 1.0,
+        'cost': variety_misc_cost
+    })
+    breakdown['total_cost_16_brownies'] += variety_misc_cost
+    
     breakdown['cost_per_brownie'] = breakdown['total_cost_16_brownies'] / 16.0
     
     return breakdown
@@ -737,15 +620,17 @@ def calculate_total_cost_and_profit(orders):
         # Calculate effective quantity (quantity - returns)
         effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
         
-        # Calculate cost per brownie for this variety
-        cost_per_brownie = calculate_cost_per_brownie(variety_name)
+        # Calculate cost per brownie for this variety using get_cost_breakdown (same as ingredients page)
+        breakdown = get_cost_breakdown(variety_name)
+        cost_per_brownie = breakdown.get('cost_per_brownie') if breakdown else None
         
         if cost_per_brownie is None:
             continue
         
-        # For Combo Pack 1, cost_per_brownie is actually cost per combo pack
-        if variety_name.lower() == 'combo pack 1':
-            # For Combo Pack 1, cost_per_brownie is already the total cost of one combo pack
+        # For combo packs, cost_per_brownie is actually cost per combo pack
+        variety = order.variety
+        if variety and variety.is_combo_pack():
+            # For combo packs, cost_per_brownie is already the total cost of one combo pack
             # So we multiply directly by effective quantity (number of combo packs)
             total_cost += cost_per_brownie * effective_quantity
             # For sales, always use actual order.price from database (sum of all order prices)
@@ -876,7 +761,9 @@ def add_order():
 def varieties():
     """List and manage varieties"""
     varieties_list = Variety.query.order_by(Variety.name).all()
-    return render_template('varieties.html', varieties=varieties_list)
+    # Get all varieties for combo pack selection (exclude combo packs themselves)
+    all_varieties = [v for v in varieties_list if not v.is_combo_pack()]
+    return render_template('varieties.html', varieties=varieties_list, all_varieties=all_varieties)
 
 
 @app.route('/varieties/add', methods=['POST'])
@@ -900,15 +787,48 @@ def add_variety():
             flash('A variety with this name already exists', 'error')
             return redirect(url_for('varieties'))
         
-        variety = Variety(name=name, default_price=Decimal(str(default_price)))
-        db_session.add(variety)
-        db_session.commit()
+        # Prepare combo pack config (JSON string of variety items with quantities)
+        import json
+        combo_pack_config = None
+        combo_items = []
+        
+        # Get all variety IDs from form
+        all_varieties = Variety.query.all()
+        for var in all_varieties:
+            if not var.is_combo_pack():  # Don't include combo packs in combo packs
+                qty_key = f'combo_qty_{var.id}'
+                quantity = request.form.get(qty_key, type=int)
+                if quantity and quantity > 0:
+                    combo_items.append({"id": var.id, "quantity": quantity})
+        
+        # Get extra packing cost from form (default to 5.0)
+        extra_packing_cost = request.form.get('extra_packing_cost', type=float) or 5.0
+        
+        # Set combo_pack_config to empty string if no items, or JSON object with items and cost
+        if combo_items:
+            combo_pack_config = json.dumps({
+                "items": combo_items,
+                "extra_packing_cost": extra_packing_cost
+            })
+        else:
+            combo_pack_config = ''  # Empty string for regular variety
+        
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.add_variety(name, Decimal(str(default_price)), combo_pack_config)
+        else:
+            variety = Variety(name=name, default_price=Decimal(str(default_price)), 
+                            combo_pack_config=combo_pack_config)
+            db_session.add(variety)
+            db_session.commit()
         
         flash(f'Variety "{name}" added successfully', 'success')
         return redirect(url_for('varieties'))
     
     except Exception as e:
-        db_session.rollback()
+        if not USE_GOOGLE_SHEETS:
+            db_session.rollback()
         flash(f'Error adding variety: {str(e)}', 'error')
         return redirect(url_for('varieties'))
 
@@ -935,15 +855,41 @@ def update_variety(id):
             flash('A variety with this name already exists', 'error')
             return redirect(url_for('varieties'))
         
+        # Prepare combo pack config (JSON string with items and extra_packing_cost)
+        import json
+        combo_items = []
+        
+        # Get all variety IDs from form
+        all_varieties = Variety.query.all()
+        for var in all_varieties:
+            if not var.is_combo_pack():  # Don't include combo packs in combo packs
+                qty_key = f'combo_qty_{var.id}'
+                quantity = request.form.get(qty_key, type=int)
+                if quantity and quantity > 0:
+                    combo_items.append({"id": var.id, "quantity": quantity})
+        
+        # Get extra packing cost from form (default to 5.0)
+        extra_packing_cost = request.form.get('extra_packing_cost', type=float) or 5.0
+        
+        # Set combo_pack_config to empty string if no items, or JSON object with items and cost
+        if combo_items:
+            combo_pack_config = json.dumps({
+                "items": combo_items,
+                "extra_packing_cost": extra_packing_cost
+            })
+        else:
+            combo_pack_config = ''  # Empty string to clear combo pack config
+        
         if USE_GOOGLE_SHEETS:
             # For Google Sheets, update via API
             from google_sheets import get_gs_db
             gs = get_gs_db()
-            gs.update_variety(id, name, Decimal(str(default_price)))
+            gs.update_variety(id, name, Decimal(str(default_price)), combo_pack_config)
         else:
             # For SQLite, update the object and commit
             variety.name = name
             variety.default_price = Decimal(str(default_price))
+            variety.combo_pack_config = combo_pack_config
             db_session.commit()
         
         flash(f'Variety "{name}" updated successfully', 'success')
@@ -1214,12 +1160,33 @@ def ingredients():
     # Get cost breakdown for all varieties
     varieties = Variety.query.order_by(Variety.name).all()
     variety_breakdowns = {}
+    variety_info = {}  # Store variety info to identify combo packs
+    variety_id_to_name = {}  # Map variety IDs to names for display
+    
     for variety in varieties:
+        variety_id_to_name[variety.id] = variety.name
         breakdown = get_cost_breakdown(variety.name)
         if breakdown:
             variety_breakdowns[variety.name] = breakdown
+            combo_items_display = []
+            if variety.is_combo_pack():
+                combo_items = variety.get_combo_pack_varieties()
+                for item in combo_items:
+                    if isinstance(item, dict):
+                        var_id = item.get('id')
+                        qty = item.get('quantity', 1)
+                        var_name = variety_id_to_name.get(var_id, f'Variety {var_id}')
+                        combo_items_display.append(f'{qty}x {var_name}')
+                    else:
+                        var_name = variety_id_to_name.get(item, f'Variety {item}')
+                        combo_items_display.append(f'1x {var_name}')
+            
+            variety_info[variety.name] = {
+                'is_combo_pack': variety.is_combo_pack(),
+                'combo_pack_items_display': combo_items_display
+            }
     
-    return render_template('ingredients.html', ingredients=ingredients_list, variety_breakdowns=variety_breakdowns)
+    return render_template('ingredients.html', ingredients=ingredients_list, variety_breakdowns=variety_breakdowns, variety_info=variety_info)
 
 
 @app.route('/cost-breakdown', methods=['GET', 'POST'])
@@ -1271,14 +1238,24 @@ def cost_breakdown():
             # - Prices < 15 → count as 0.5 brownie per unit
             # Example: price=25, quantity=2 → 2 brownies
             # Example: price=12.5, quantity=1 → 0.5 brownies
+            # For combo packs: count actual brownies in the combo pack
             total_brownies = 0
             for order in orders:
-                order_price = float(order.price)
+                variety = order.variety
                 effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
                 order_quantity = float(effective_quantity)
-                # Determine brownie count based on price
-                brownies_per_unit = calculate_brownies_from_price(order_price)
-                brownies_for_order = brownies_per_unit * order_quantity
+                
+                # Check if this is a combo pack
+                if variety and variety.is_combo_pack():
+                    # For combo packs, count actual brownies in the combo pack
+                    brownies_per_combo = get_brownies_in_combo_pack(variety)
+                    brownies_for_order = brownies_per_combo * order_quantity
+                else:
+                    # For regular brownies, determine brownie count based on price
+                    order_price = float(order.price)
+                    brownies_per_unit = calculate_brownies_from_price(order_price)
+                    brownies_for_order = brownies_per_unit * order_quantity
+                
                 total_brownies += brownies_for_order
             
             # Calculate quantities needed (per 4 brownies)
@@ -1464,22 +1441,24 @@ def api_overall_report():
                     'brownies_count': 0
                 }
             
-            # Calculate cost per brownie for this variety
-            cost_per_brownie = calculate_cost_per_brownie(variety_name)
+            # Calculate cost per brownie for this variety using get_cost_breakdown (same as ingredients page)
+            breakdown = get_cost_breakdown(variety_name)
+            cost_per_brownie = breakdown.get('cost_per_brownie') if breakdown else None
             
             if cost_per_brownie is not None:
                 effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
                 order_quantity = float(effective_quantity)
                 
-                # For Combo Pack 1, cost_per_brownie is actually cost per combo pack
-                if variety_name.lower() == 'combo pack 1':
+                # For combo packs, cost_per_brownie is actually cost per combo pack
+                if variety and variety.is_combo_pack():
                     # For Combo Pack 1, cost_per_brownie is already the total cost of one combo pack
                     # So we multiply directly by effective quantity (number of combo packs)
                     order_cost = cost_per_brownie * effective_quantity
                     # For sales, always use actual order.price from database (not calculated price)
                     order_sales = float(order.price * effective_quantity)
-                    # For combo pack, brownies_count = effective_quantity (1 combo pack = 1 unit)
-                    brownies_count = effective_quantity
+                    # For combo pack, count actual brownies in the combo pack
+                    brownies_per_combo = get_brownies_in_combo_pack(variety)
+                    brownies_count = brownies_per_combo * effective_quantity
                 else:
                     # For regular brownies, determine brownie count based on price
                     order_price = float(order.price)
@@ -1498,8 +1477,9 @@ def api_overall_report():
         for variety_name, data in variety_cost_breakdown.items():
             profit = data['sales'] - data['cost']
             profit_pct = (profit / data['sales'] * 100) if data['sales'] > 0 else 0
-            # For Combo Pack 1, show cost per combo pack, not per brownie
-            if variety_name.lower() == 'combo pack 1':
+            # For combo packs, show cost per combo pack, not per brownie
+            variety_obj = Variety.query.filter_by(name=variety_name).first()
+            if variety_obj and variety_obj.is_combo_pack():
                 cost_per_unit = round(data['cost'] / data['quantity'], 2) if data['quantity'] > 0 else 0
             else:
                 cost_per_unit = round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
@@ -1697,22 +1677,24 @@ def api_monthly_report(year, month):
                     'brownies_count': 0
                 }
             
-            # Calculate cost per brownie for this variety
-            cost_per_brownie = calculate_cost_per_brownie(variety_name)
+            # Calculate cost per brownie for this variety using get_cost_breakdown (same as ingredients page)
+            breakdown = get_cost_breakdown(variety_name)
+            cost_per_brownie = breakdown.get('cost_per_brownie') if breakdown else None
             
             if cost_per_brownie is not None:
                 effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
                 order_quantity = float(effective_quantity)
                 
-                # For Combo Pack 1, cost_per_brownie is actually cost per combo pack
-                if variety_name.lower() == 'combo pack 1':
-                    # For Combo Pack 1, cost_per_brownie is already the total cost of one combo pack
+                # For combo packs, cost_per_brownie is actually cost per combo pack
+                if variety and variety.is_combo_pack():
+                    # For combo packs, cost_per_brownie is already the total cost of one combo pack
                     # So we multiply directly by effective quantity (number of combo packs)
                     order_cost = cost_per_brownie * effective_quantity
                     # For sales, always use actual order.price from database (sum of all order prices)
                     order_sales = float(order.price * effective_quantity)
-                    # For combo pack, brownies_count = effective_quantity (1 combo pack = 1 unit)
-                    brownies_count = effective_quantity
+                    # For combo pack, count actual brownies in the combo pack
+                    brownies_per_combo = get_brownies_in_combo_pack(variety)
+                    brownies_count = brownies_per_combo * effective_quantity
                 else:
                     # For regular brownies, determine brownie count based on price
                     order_price = float(order.price)
@@ -1731,8 +1713,9 @@ def api_monthly_report(year, month):
         for variety_name, data in variety_cost_breakdown.items():
             profit = data['sales'] - data['cost']
             profit_pct = (profit / data['sales'] * 100) if data['sales'] > 0 else 0
-            # For Combo Pack 1, show cost per combo pack, not per brownie
-            if variety_name.lower() == 'combo pack 1':
+            # For combo packs, show cost per combo pack, not per brownie
+            variety_obj = Variety.query.filter_by(name=variety_name).first()
+            if variety_obj and variety_obj.is_combo_pack():
                 cost_per_unit = round(data['cost'] / data['quantity'], 2) if data['quantity'] > 0 else 0
             else:
                 cost_per_unit = round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0

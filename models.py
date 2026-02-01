@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+import json
 
 db = SQLAlchemy()
 
@@ -11,6 +12,7 @@ class Variety(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), unique=True, nullable=False)
     default_price = db.Column(db.Numeric(10, 2), nullable=False)
+    combo_pack_config = db.Column(db.Text, nullable=True)  # JSON string storing list of variety IDs
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # Relationship with orders
@@ -19,11 +21,53 @@ class Variety(db.Model):
     def __repr__(self):
         return f'<Variety {self.name}>'
     
+    def get_combo_pack_varieties(self):
+        """Get list of variety items in this combo pack with quantities
+        Returns list of dicts: [{"id": 1, "quantity": 2}, {"id": 2, "quantity": 1}]
+        For backward compatibility, handles multiple formats:
+        - Old format: [1, 2, 3] (list of integers)
+        - Medium format: [{"id": 1, "quantity": 2}] (list of dicts)
+        - New format: {"items": [...], "extra_packing_cost": 5.0} (object with items and cost)
+        """
+        if self.combo_pack_config:
+            try:
+                data = json.loads(self.combo_pack_config)
+                # Check if it's new format (object with items and extra_packing_cost)
+                if isinstance(data, dict) and 'items' in data:
+                    return data.get('items', [])
+                # Check if it's old format (list of integers)
+                elif isinstance(data, list) and data and isinstance(data[0], int):
+                    # Convert old format to new format
+                    return [{"id": vid, "quantity": 1} for vid in data]
+                # Medium format (list of dicts)
+                elif isinstance(data, list):
+                    return data
+            except:
+                return []
+        return []
+    
+    def get_extra_packing_cost(self):
+        """Get extra packing cost for combo pack, defaults to 5.0"""
+        if self.combo_pack_config:
+            try:
+                data = json.loads(self.combo_pack_config)
+                # Check if it's new format (object with items and extra_packing_cost)
+                if isinstance(data, dict) and 'extra_packing_cost' in data:
+                    return float(data.get('extra_packing_cost', 5.0))
+            except:
+                pass
+        return 5.0  # Default value
+    
+    def is_combo_pack(self):
+        """Check if this variety is a combo pack"""
+        return self.combo_pack_config is not None and self.combo_pack_config.strip() != ''
+    
     def to_dict(self):
         return {
             'id': self.id,
             'name': self.name,
-            'default_price': float(self.default_price)
+            'default_price': float(self.default_price),
+            'combo_pack_config': self.get_combo_pack_varieties()
         }
 
 

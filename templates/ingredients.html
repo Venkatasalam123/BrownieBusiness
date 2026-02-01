@@ -90,7 +90,18 @@
                                 </h2>
                                 <div id="collapse{{ loop.index }}" class="accordion-collapse collapse {% if loop.index == 1 %}show{% endif %}" data-bs-parent="#varietyCostBreakdown">
                                     <div class="accordion-body">
+                                        {% set is_combo_pack = variety_info[variety_name].is_combo_pack if variety_info.get(variety_name) else False %}
+                                        {% if is_combo_pack %}
+                                        <p class="text-muted mb-3"><strong>Cost Breakdown for 1 combo pack:</strong></p>
+                                        {% if variety_info[variety_name].combo_pack_items_display %}
+                                        <p class="text-info small mb-2">
+                                            <i class="fas fa-info-circle me-1"></i>
+                                            <strong>Combo Pack Contents:</strong> {{ variety_info[variety_name].combo_pack_items_display|join(', ') }}
+                                        </p>
+                                        {% endif %}
+                                        {% else %}
                                         <p class="text-muted mb-3"><strong>Cost Breakdown for 16 brownies:</strong></p>
+                                        {% endif %}
                                         <div class="table-responsive">
                                             <table class="table table-sm table-bordered">
                                                 <thead class="table-light">
@@ -115,11 +126,19 @@
                                                     </tr>
                                                     {% endfor %}
                                                     <tr class="table-info">
+                                                        {% if is_combo_pack %}
+                                                        <td colspan="5" class="text-end"><strong>Total Cost (1 combo pack):</strong></td>
+                                                        {% else %}
                                                         <td colspan="5" class="text-end"><strong>Total Cost (16 brownies):</strong></td>
+                                                        {% endif %}
                                                         <td><strong>₹{{ "%.2f"|format(breakdown.total_cost_16_brownies) }}</strong></td>
                                                     </tr>
                                                     <tr class="table-success">
+                                                        {% if is_combo_pack %}
+                                                        <td colspan="5" class="text-end"><strong>Cost per Combo Pack:</strong></td>
+                                                        {% else %}
                                                         <td colspan="5" class="text-end"><strong>Cost per Brownie (÷ 16):</strong></td>
+                                                        {% endif %}
                                                         <td><strong>₹{{ "%.2f"|format(breakdown.cost_per_brownie) }}</strong></td>
                                                     </tr>
                                                 </tbody>
