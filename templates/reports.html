@@ -1,185 +1,278 @@
 {% extends "base.html" %}
 
-{% block title %}Sales Reports - Brownie Sales Tracker{% endblock %}
+{% block title %}Reports &amp; Analytics - Brownie Sales Tracker{% endblock %}
 
 {% block content %}
-<div class="row">
+<style>
+    .reports-page .chart-box {
+        position: relative;
+        height: 200px;
+        max-width: 100%;
+    }
+    .reports-page .chart-box--tall {
+        height: 220px;
+    }
+    .reports-page .chart-box--pie {
+        height: 280px;
+    }
+    .reports-page .filter-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 0.75rem 1rem;
+    }
+    .reports-page .filter-toolbar .filter-shop-wrap {
+        flex: 1 1 12rem;
+        min-width: 10rem;
+        max-width: 22rem;
+    }
+    .reports-page .filter-toolbar .filter-period-wrap {
+        flex: 1 1 18rem;
+    }
+    .reports-page .filter-toolbar .filter-trend-wrap {
+        flex: 0 1 11rem;
+        min-width: 9rem;
+    }
+    .reports-page .filter-toolbar .filter-actions-wrap {
+        flex: 0 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .reports-page .filter-toolbar .form-label.compact {
+        font-size: 0.8rem;
+        margin-bottom: 0.2rem;
+    }
+    .reports-page .preset-btn.active {
+        background: var(--bs-primary);
+        color: #fff;
+        border-color: var(--bs-primary);
+    }
+    .reports-page .kpi-card {
+        border-radius: 0.5rem;
+        padding: 1rem 1.1rem;
+        border: 1px solid rgba(0,0,0,.08);
+        height: 100%;
+    }
+    .reports-page .kpi-card h6 {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: #6c757d;
+        margin-bottom: 0.35rem;
+    }
+    .reports-page .kpi-card .val {
+        font-size: 1.35rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .reports-collapse-h {
+        cursor: pointer;
+        user-select: none;
+    }
+    .reports-collapse-h .fa-chevron-down {
+        transition: transform 0.2s ease;
+    }
+    .reports-collapse-h.collapsed .fa-chevron-down {
+        transform: rotate(-90deg);
+    }
+</style>
+
+<div class="reports-page row">
     <div class="col-12">
-        <div class="card mb-4">
-            <div class="card-header">
-                <h2 class="card-title mb-0">
-                    <i class="fas fa-chart-line me-2"></i>Monthly Sales Report
-                </h2>
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div>
+                <h2 class="mb-1"><i class="fas fa-chart-pie me-2"></i>Reports &amp; analytics</h2>
+                <p class="text-muted mb-0 small">Filter by period and shop. Default: <strong>all shops</strong>, <strong>this calendar month</strong>.</p>
             </div>
-            <div class="card-body">
-                <div class="mb-3">
-                    <label class="form-label">
-                        <i class="fas fa-chart-bar me-2"></i>Report Type <span class="text-danger">*</span>
-                    </label>
-                    <div class="btn-group w-100" role="group">
-                        <input type="radio" class="btn-check" name="report_type" id="report_type_monthly" value="monthly" checked>
-                        <label class="btn btn-outline-primary" for="report_type_monthly">
-                            <i class="fas fa-calendar-alt me-2"></i>Monthly
-                        </label>
-                        <input type="radio" class="btn-check" name="report_type" id="report_type_overall" value="overall">
-                        <label class="btn btn-outline-primary" for="report_type_overall">
-                            <i class="fas fa-chart-line me-2"></i>Overall
-                        </label>
+            <span class="badge bg-primary fs-6 fw-normal" id="periodBadge">—</span>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-body py-3">
+                <div class="filter-toolbar">
+                    <div class="filter-shop-wrap">
+                        <label for="filterShop" class="form-label compact fw-semibold mb-0"><i class="fas fa-store me-1"></i>Shop</label>
+                        <select class="form-select form-select-sm" id="filterShop" aria-label="Shop or customer">
+                            <option value="">All shops</option>
+                            {% for s in shops %}
+                            <option value="{{ s.id }}">{{ s.name }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
-                </div>
-                <div id="monthlyFilters">
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label for="report_year" class="form-label">
-                                <i class="fas fa-calendar me-2"></i>Year
-                            </label>
-                            <select class="form-select form-select-lg" id="report_year">
-                                {% for year in available_years %}
-                                <option value="{{ year }}" {% if year == current_year %}selected{% endif %}>{{ year }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div class="col-md-6">
-                            <label for="report_month" class="form-label">
-                                <i class="fas fa-calendar-alt me-2"></i>Month
-                            </label>
-                            <select class="form-select form-select-lg" id="report_month">
-                                {% for month_num in range(1, 13) %}
-                                <option value="{{ month_num }}" {% if month_num == current_month %}selected{% endif %}>
-                                    {{ ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][month_num - 1] }}
-                                </option>
-                                {% endfor %}
-                            </select>
+                    <div class="filter-period-wrap">
+                        <span class="form-label compact fw-semibold d-block"><i class="fas fa-calendar me-1"></i>Period</span>
+                        <div class="d-flex flex-wrap gap-1" id="presetGroup" role="group" aria-label="Date preset">
+                            <button type="button" class="btn btn-outline-primary btn-sm preset-btn active" data-preset="this_month">This month</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm preset-btn" data-preset="last_month">Last month</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm preset-btn" data-preset="this_year">This year</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm preset-btn" data-preset="last_year">Last year</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm preset-btn" data-preset="custom">Custom</button>
                         </div>
                     </div>
+                    <div class="filter-trend-wrap">
+                        <label for="trendBucket" class="form-label compact fw-semibold mb-0"><i class="fas fa-chart-line me-1"></i>Trend by</label>
+                        <select class="form-select form-select-sm" id="trendBucket" aria-label="Sales and profit chart bucket size">
+                            <option value="auto" selected>Auto</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="yearly">Yearly</option>
+                        </select>
+                    </div>
+                    <div class="filter-actions-wrap">
+                        <button type="button" class="btn btn-primary btn-sm" id="btnApplyFilters">
+                            <i class="fas fa-sync-alt me-1"></i>Apply
+                        </button>
+                        <span class="text-muted small" id="trendGranularityHint"></span>
+                    </div>
                 </div>
-                <button type="button" class="btn btn-primary btn-lg w-100" id="loadReport">
-                    <i class="fas fa-sync-alt me-2"></i>Load Report
-                </button>
+                <div class="mt-2 pt-2 border-top" id="customRangeRow" style="display: none;">
+                    <div class="d-flex flex-wrap gap-2 align-items-end">
+                        <div>
+                            <label for="dateFrom" class="form-label small mb-0">From</label>
+                            <input type="date" class="form-control form-control-sm" id="dateFrom" max="{{ today_iso }}">
+                        </div>
+                        <div>
+                            <label for="dateTo" class="form-label small mb-0">To</label>
+                            <input type="date" class="form-control form-control-sm" id="dateTo" max="{{ today_iso }}">
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div id="reportContent" style="display: none;">
-            <!-- Summary Statistics -->
-            <div class="row mb-4">
-                <div class="col-md-3 mb-3">
-                    <div class="stat-card" style="background: var(--primary-gradient);">
-                        <h5><i class="fas fa-rupee-sign me-2"></i>Total Sales</h5>
-                        <h3 id="totalSales">₹0.00</h3>
+        <div id="reportError" class="alert alert-danger d-none" role="alert"></div>
+
+        <div id="reportMain">
+            <div class="row g-3 mb-4">
+                <div class="col-6 col-md-3">
+                    <div class="kpi-card bg-primary bg-opacity-10">
+                        <h6>Total sales</h6>
+                        <div class="val text-primary" id="kpiSales">₹0</div>
                     </div>
                 </div>
-                <div class="col-md-3 mb-3">
-                    <div class="stat-card" style="background: var(--success-gradient);">
-                        <h5><i class="fas fa-chart-line me-2"></i>Profit</h5>
-                        <h3 id="margin">₹0.00</h3>
-                        <small class="text-muted" id="profitPercentage">0.00% margin</small>
+                <div class="col-6 col-md-3">
+                    <div class="kpi-card bg-success bg-opacity-10">
+                        <h6>Profit</h6>
+                        <div class="val text-success" id="kpiProfit">₹0</div>
                     </div>
                 </div>
-                <div class="col-md-3 mb-3">
-                    <div class="stat-card" style="background: var(--danger-gradient);">
-                        <h5><i class="fas fa-exclamation-triangle me-2"></i>Pending Amount</h5>
-                        <h3 id="totalPending">₹0.00</h3>
+                <div class="col-6 col-md-3">
+                    <div class="kpi-card">
+                        <h6>Margin</h6>
+                        <div class="val" id="kpiMargin">0%</div>
                     </div>
                 </div>
-                <div class="col-md-3 mb-3">
-                    <div class="stat-card" style="background: var(--info-gradient);">
-                        <h5><i class="fas fa-shopping-cart me-2"></i>Total Orders</h5>
-                        <h3 id="totalOrders">0</h3>
+                <div class="col-6 col-md-3">
+                    <div class="kpi-card bg-warning bg-opacity-10">
+                        <h6>Pending</h6>
+                        <div class="val text-warning" id="kpiPending">₹0</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Charts -->
-            <div class="row mb-4">
-                <div class="col-md-6 mb-3">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="mb-0">
-                                <i class="fas fa-store me-2"></i>Sales by Shop/Customer
-                            </h5>
+            <div class="row g-3 mb-4">
+                <div class="col-lg-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white py-2 border-bottom">
+                            <strong><i class="fas fa-chart-line text-primary me-1"></i>Sales trend</strong>
+                            <span class="text-muted small ms-1">(same buckets as profit; use <strong>Trend by</strong> above)</span>
                         </div>
                         <div class="card-body">
-                            <canvas id="shopChart"></canvas>
+                            <div class="chart-box chart-box--tall">
+                                <canvas id="chartSalesLine"></canvas>
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div class="col-md-6 mb-3">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="mb-0">
-                                <i class="fas fa-layer-group me-2"></i>Sales by Variety
-                            </h5>
+                <div class="col-lg-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white py-2 border-bottom">
+                            <strong><i class="fas fa-chart-bar text-success me-1"></i>Profit trend</strong>
+                            <span class="text-muted small ms-1">(after cost &amp; courier; same buckets as sales)</span>
                         </div>
                         <div class="card-body">
-                            <canvas id="varietyChart"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Profit by Month Chart -->
-            <div class="row mb-4">
-                <div class="col-12 mb-3">
-                    <div class="card">
-                        <div class="card-header">
-                            <h5 class="mb-0">
-                                <i class="fas fa-chart-bar me-2"></i>Profit by Month
-                            </h5>
-                        </div>
-                        <div class="card-body">
-                            <canvas id="profitByMonthChart"></canvas>
+                            <div class="chart-box chart-box--tall">
+                                <canvas id="chartProfitBar"></canvas>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Shop-wise Breakdown Table -->
-            <div class="card mb-4">
-                <div class="card-header bg-secondary text-white">
-                    <h5 class="mb-0">
-                        <i class="fas fa-list me-2"></i>Shop/Customer Breakdown
-                    </h5>
+            <div class="row g-3 mb-4">
+                <div class="col-lg-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white py-2 border-bottom">
+                            <strong><i class="fas fa-store me-1"></i>Sales by shop</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-box chart-box--pie">
+                                <canvas id="chartShopPie"></canvas>
+                            </div>
+                            <p class="text-muted small mb-0 mt-2" id="shopPieEmpty" style="display:none;">No shop breakdown in this slice (e.g. one shop selected).</p>
+                        </div>
+                    </div>
                 </div>
-                <div class="card-body">
+                <div class="col-lg-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white py-2 border-bottom">
+                            <strong><i class="fas fa-layer-group me-1"></i>Sales by variety</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-box chart-box--pie">
+                                <canvas id="chartVarietyPie"></canvas>
+                            </div>
+                            <p class="text-muted small mb-0 mt-2" id="varietyPieEmpty" style="display:none;">No orders in this period.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-secondary text-white reports-collapse-h collapsed py-2" data-bs-toggle="collapse" data-bs-target="#shopTableCollapse" aria-expanded="false" id="shopTableToggle">
+                    <strong><i class="fas fa-chevron-down me-2"></i>Shop / customer breakdown (table)</strong>
+                </div>
+                <div class="collapse" id="shopTableCollapse">
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover table-sm mb-0" id="shopTable">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Shop</th>
+                                        <th>Sales</th>
+                                        <th>Pending</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-secondary text-white py-2">
+                    <strong><i class="fas fa-calculator me-2"></i>Variety cost breakdown</strong>
+                </div>
+                <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table table-striped" id="shopTable">
-                            <thead>
+                        <table class="table table-striped table-sm mb-0" id="varietyTable">
+                            <thead class="table-light">
                                 <tr>
-                                    <th><i class="fas fa-store me-2"></i>Shop/Customer</th>
-                                    <th><i class="fas fa-rupee-sign me-2"></i>Total Sales</th>
-                                    <th><i class="fas fa-exclamation-triangle me-2"></i>Pending</th>
+                                    <th>Variety</th>
+                                    <th>Qty</th>
+                                    <th>Brownies</th>
+                                    <th>Cost / unit</th>
+                                    <th>Total cost</th>
+                                    <th>Total sales</th>
+                                    <th>Avg sale / unit</th>
+                                    <th>Profit %</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Variety-wise Breakdown Table -->
-            <div class="card">
-                <div class="card-header bg-secondary text-white">
-                    <h5 class="mb-0">
-                        <i class="fas fa-list me-2"></i>Variety Cost Breakdown
-                    </h5>
-                </div>
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-striped" id="varietyTable">
-                            <thead>
-                                <tr>
-                                    <th><i class="fas fa-layer-group me-2"></i>Variety</th>
-                                    <th><i class="fas fa-hashtag me-2"></i>Qty</th>
-                                    <th><i class="fas fa-cookie me-2"></i>Brownies</th>
-                                    <th><i class="fas fa-rupee-sign me-2"></i>Cost/Brownie</th>
-                                    <th><i class="fas fa-rupee-sign me-2"></i>Total Cost</th>
-                                    <th><i class="fas fa-rupee-sign me-2"></i>Total Sales</th>
-                                    <th><i class="fas fa-percentage me-2"></i>Profit %</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            </tbody>
+                            <tbody></tbody>
                         </table>
                     </div>
                 </div>
@@ -193,216 +286,233 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
 <script>
-    let shopChart = null;
-    let varietyChart = null;
-    let profitByMonthChart = null;
+(function() {
+    let activePreset = 'this_month';
+    let chartSalesLine = null;
+    let chartProfitBar = null;
+    let chartShopPie = null;
+    let chartVarietyPie = null;
 
-    // Toggle monthly filters visibility
-    document.querySelectorAll('input[name="report_type"]').forEach(radio => {
-        radio.addEventListener('change', function() {
-            const monthlyFilters = document.getElementById('monthlyFilters');
-            if (this.value === 'monthly') {
-                monthlyFilters.style.display = 'block';
-            } else {
-                monthlyFilters.style.display = 'none';
+    function setPresetUI(preset) {
+        activePreset = preset;
+        document.querySelectorAll('.preset-btn').forEach(b => {
+            b.classList.toggle('active', b.getAttribute('data-preset') === preset);
+        });
+        const customRow = document.getElementById('customRangeRow');
+        customRow.style.display = preset === 'custom' ? 'block' : 'none';
+        if (preset === 'custom') {
+            const df = document.getElementById('dateFrom');
+            const dte = document.getElementById('dateTo');
+            if (!df.value || !dte.value) {
+                const now = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                df.value = iso(new Date(now.getFullYear(), now.getMonth(), 1));
+                dte.value = iso(now);
             }
+        }
+    }
+
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            setPresetUI(this.getAttribute('data-preset'));
         });
     });
 
-    document.getElementById('loadReport').addEventListener('click', function() {
-        const reportType = document.querySelector('input[name="report_type"]:checked').value;
-        let apiUrl;
-        
-        if (reportType === 'overall') {
-            apiUrl = '/api/reports/overall';
-        } else {
-            const year = document.getElementById('report_year').value;
-            const month = document.getElementById('report_month').value;
-            apiUrl = `/api/reports/monthly/${year}/${month}`;
-        }
-        
-        fetch(apiUrl)
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    alert('Error loading report: ' + data.error);
-                    return;
-                }
-
-                // Show report content
-                document.getElementById('reportContent').style.display = 'block';
-
-                // Update summary statistics
-                document.getElementById('totalSales').textContent = '₹' + data.total_sales.toFixed(2);
-                const profitColor = data.margin < 0 ? 'text-danger' : 'text-success';
-                const marginElement = document.getElementById('margin');
-                marginElement.textContent = '₹' + data.margin.toFixed(2);
-                marginElement.className = profitColor;
-                const profitPercentageElement = document.getElementById('profitPercentage');
-                profitPercentageElement.textContent = data.profit_percentage.toFixed(2) + '% margin';
-                profitPercentageElement.className = 'text-muted ' + (data.margin < 0 ? 'text-danger' : '');
-                document.getElementById('totalPending').textContent = '₹' + data.total_pending.toFixed(2);
-                document.getElementById('totalOrders').textContent = data.total_orders;
-
-                // Update shop chart
-                if (shopChart) {
-                    shopChart.destroy();
-                }
-                shopChart = createPieChart('shopChart', data.shop_data.labels, data.shop_data.values, 'Sales by Shop/Customer');
-
-                // Update variety chart
-                if (varietyChart) {
-                    varietyChart.destroy();
-                }
-                varietyChart = createPieChart('varietyChart', data.variety_data.labels, data.variety_data.values, 'Sales by Variety');
-
-                // Load profit by month chart
-                loadProfitByMonthChart();
-
-                // Update shop table
-                const shopTableBody = document.querySelector('#shopTable tbody');
-                shopTableBody.innerHTML = '';
-                data.shop_data.labels.forEach((label, index) => {
-                    const row = document.createElement('tr');
-                    const pending = data.shop_data.pending[index] || 0;
-                    row.innerHTML = `
-                        <td>${label}</td>
-                        <td>₹${data.shop_data.values[index].toFixed(2)}</td>
-                        <td class="${pending > 0 ? 'text-danger' : 'text-success'}">₹${pending.toFixed(2)}</td>
-                    `;
-                    shopTableBody.appendChild(row);
-                });
-
-                // Update variety table with cost breakdown
-                const varietyTableBody = document.querySelector('#varietyTable tbody');
-                varietyTableBody.innerHTML = '';
-                
-                if (data.variety_breakdown && data.variety_breakdown.length > 0) {
-                    data.variety_breakdown.forEach((variety) => {
-                        const row = document.createElement('tr');
-                        const profitPercent = variety.profit_percentage || 0;
-                        const profitPercentClass = profitPercent < 0 ? 'text-danger' : 'text-success';
-                        row.innerHTML = `
-                            <td><strong>${variety.name}</strong></td>
-                            <td>${variety.quantity}</td>
-                            <td>${variety.brownies_count.toFixed(2)}</td>
-                            <td>₹${variety.cost_per_brownie.toFixed(2)}</td>
-                            <td>₹${variety.cost.toFixed(2)}</td>
-                            <td>₹${variety.sales.toFixed(2)}</td>
-                            <td class="${profitPercentClass}"><strong>${profitPercent.toFixed(2)}%</strong></td>
-                        `;
-                        varietyTableBody.appendChild(row);
-                    });
-                } else {
-                    // Fallback to old format if breakdown not available
-                    data.variety_data.labels.forEach((label, index) => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td>${label}</td>
-                            <td>-</td>
-                            <td>-</td>
-                            <td>-</td>
-                            <td>-</td>
-                            <td>₹${data.variety_data.values[index].toFixed(2)}</td>
-                            <td>-</td>
-                        `;
-                        varietyTableBody.appendChild(row);
-                    });
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('Error loading report. Please try again.');
-            });
+    document.getElementById('shopTableToggle').addEventListener('click', function() {
+        this.classList.toggle('collapsed');
     });
 
-    // Load profit by month chart
-    function loadProfitByMonthChart() {
-        fetch('/api/reports/profit-by-month')
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    console.error('Error loading profit by month:', data.error);
-                    return;
-                }
+    document.getElementById('trendBucket').addEventListener('change', loadDashboard);
 
-                if (data.profit_by_month && data.profit_by_month.length > 0) {
-                    const labels = data.profit_by_month.map(item => item.month);
-                    const profits = data.profit_by_month.map(item => item.profit);
-                    
-                    // Use green for positive profit, red for negative
-                    const colors = profits.map(profit => 
-                        profit >= 0 ? 'rgba(75, 192, 192, 0.8)' : 'rgba(255, 99, 132, 0.8)'
-                    );
-                    
-                    // Destroy existing chart if it exists
-                    if (profitByMonthChart) {
-                        profitByMonthChart.destroy();
-                    }
-                    
-                    // Create bar chart with dynamic colors
-                    const ctx = document.getElementById('profitByMonthChart');
-                    if (ctx) {
-                        profitByMonthChart = new Chart(ctx, {
-                            type: 'bar',
-                            data: {
-                                labels: labels,
-                                datasets: [{
-                                    label: 'Profit',
-                                    data: profits,
-                                    backgroundColor: colors,
-                                    borderColor: colors.map(c => c.replace('0.8', '1')),
-                                    borderWidth: 2
-                                }]
-                            },
-                            options: {
-                                responsive: true,
-                                maintainAspectRatio: true,
-                                plugins: {
-                                    legend: {
-                                        display: false
-                                    },
-                                    tooltip: {
-                                        callbacks: {
-                                            label: function(context) {
-                                                const value = context.parsed.y || 0;
-                                                const index = context.dataIndex;
-                                                const monthData = data.profit_by_month[index];
-                                                return [
-                                                    'Profit: ₹' + value.toFixed(2),
-                                                    'Sales: ₹' + monthData.sales.toFixed(2),
-                                                    'Cost: ₹' + monthData.cost.toFixed(2)
-                                                ];
-                                            }
-                                        }
-                                    }
-                                },
-                                scales: {
-                                    y: {
-                                        beginAtZero: false,
-                                        ticks: {
-                                            callback: function(value) {
-                                                return '₹' + value.toFixed(0);
-                                            }
-                                        }
+    function buildQueryString() {
+        const params = new URLSearchParams();
+        params.set('preset', activePreset);
+        const shop = document.getElementById('filterShop').value;
+        if (shop) params.set('shop_id', shop);
+        if (activePreset === 'custom') {
+            params.set('from', document.getElementById('dateFrom').value);
+            params.set('to', document.getElementById('dateTo').value);
+        }
+        params.set('trend_bucket', document.getElementById('trendBucket').value || 'auto');
+        return params.toString();
+    }
+
+    function destroyChart(ch) {
+        if (ch) { try { ch.destroy(); } catch (e) {} }
+    }
+
+    function loadDashboard() {
+        const errEl = document.getElementById('reportError');
+        errEl.classList.add('d-none');
+        fetch('/api/reports/dashboard?' + buildQueryString())
+            .then(async r => {
+                const j = await r.json().catch(() => ({}));
+                if (!r.ok) throw (j.error || r.statusText || 'Request failed');
+                return j;
+            })
+            .then(data => {
+                document.getElementById('periodBadge').textContent = data.period.label;
+                const g = data.trend_granularity || '';
+                const req = (data.trend_bucket_request || document.getElementById('trendBucket').value || 'auto').toLowerCase();
+                let hint = '';
+                if (g) {
+                    hint = 'Charts: ' + g + (req === 'auto' ? ' (auto for this range)' : ' (selected)') + '.';
+                }
+                document.getElementById('trendGranularityHint').textContent = hint;
+
+                document.getElementById('kpiSales').textContent = '₹' + data.total_sales.toFixed(2);
+                const profEl = document.getElementById('kpiProfit');
+                profEl.textContent = '₹' + data.margin.toFixed(2);
+                profEl.className = 'val ' + (data.margin < 0 ? 'text-danger' : 'text-success');
+                document.getElementById('kpiMargin').textContent = data.profit_percentage.toFixed(1) + '%';
+                document.getElementById('kpiPending').textContent = '₹' + data.total_pending.toFixed(2);
+
+                const labels = data.trend_labels || [];
+                const salesT = data.trend_sales || [];
+                const profitT = data.trend_profit || [];
+
+                destroyChart(chartSalesLine);
+                const ctxL = document.getElementById('chartSalesLine');
+                if (ctxL && labels.length) {
+                    chartSalesLine = new Chart(ctxL, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Sales',
+                                data: salesT,
+                                borderColor: 'rgba(134, 75, 47, 1)',
+                                backgroundColor: 'rgba(134, 75, 47, 0.14)',
+                                fill: true,
+                                tension: 0.3,
+                                borderWidth: 2,
+                                pointRadius: 2,
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        label: c => '₹' + Number(c.parsed.y).toFixed(2)
                                     }
                                 }
+                            },
+                            scales: {
+                                y: {
+                                    ticks: { callback: v => '₹' + v, font: { size: 10 } }
+                                },
+                                x: { ticks: { font: { size: 9 }, maxRotation: 60 } }
                             }
-                        });
-                    }
+                        }
+                    });
+                }
+
+                destroyChart(chartProfitBar);
+                const ctxB = document.getElementById('chartProfitBar');
+                if (ctxB && labels.length) {
+                    const barColors = profitT.map(p => p >= 0 ? 'rgba(25, 135, 84, 0.75)' : 'rgba(220, 53, 69, 0.75)');
+                    chartProfitBar = new Chart(ctxB, {
+                        type: 'bar',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Profit',
+                                data: profitT,
+                                backgroundColor: barColors,
+                                borderWidth: 0,
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        label: c => '₹' + Number(c.parsed.y).toFixed(2)
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    ticks: { callback: v => '₹' + v, font: { size: 10 } }
+                                },
+                                x: { ticks: { font: { size: 9 }, maxRotation: 60 } }
+                            }
+                        }
+                    });
+                }
+
+                const shopLabels = data.shop_data.labels || [];
+                const shopVals = data.shop_data.values || [];
+                destroyChart(chartShopPie);
+                const shopEmpty = document.getElementById('shopPieEmpty');
+                if (shopLabels.length && shopVals.some(v => v > 0)) {
+                    shopEmpty.style.display = 'none';
+                    chartShopPie = createPieChart('chartShopPie', shopLabels, shopVals, 'Shop');
+                } else {
+                    shopEmpty.style.display = 'block';
+                }
+
+                const vLabels = data.variety_data.labels || [];
+                const vVals = data.variety_data.values || [];
+                destroyChart(chartVarietyPie);
+                const vEmpty = document.getElementById('varietyPieEmpty');
+                if (vLabels.length && vVals.some(v => v > 0)) {
+                    vEmpty.style.display = 'none';
+                    chartVarietyPie = createPieChart('chartVarietyPie', vLabels, vVals, 'Variety');
+                } else {
+                    vEmpty.style.display = 'block';
+                }
+
+                const shopBody = document.querySelector('#shopTable tbody');
+                shopBody.innerHTML = '';
+                shopLabels.forEach((label, i) => {
+                    const pending = (data.shop_data.pending && data.shop_data.pending[i]) || 0;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${label}</td>
+                        <td>₹${shopVals[i].toFixed(2)}</td>
+                        <td class="${pending > 0 ? 'text-danger' : 'text-success'}">₹${pending.toFixed(2)}</td>`;
+                    shopBody.appendChild(tr);
+                });
+
+                const vBody = document.querySelector('#varietyTable tbody');
+                vBody.innerHTML = '';
+                if (data.variety_breakdown && data.variety_breakdown.length) {
+                    data.variety_breakdown.forEach(v => {
+                        const pctClass = (v.profit_percentage || 0) < 0 ? 'text-danger' : 'text-success';
+                        const avg = v.avg_sale_price != null ? v.avg_sale_price : (v.quantity > 0 ? v.sales / v.quantity : 0);
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td><strong>${v.name}</strong></td>
+                            <td>${v.quantity}</td>
+                            <td>${v.brownies_count.toFixed(2)}</td>
+                            <td>₹${v.cost_per_brownie.toFixed(2)}</td>
+                            <td>₹${v.cost.toFixed(2)}</td>
+                            <td>₹${v.sales.toFixed(2)}</td>
+                            <td>₹${Number(avg).toFixed(2)}</td>
+                            <td class="${pctClass}"><strong>${v.profit_percentage.toFixed(2)}%</strong></td>`;
+                        vBody.appendChild(tr);
+                    });
                 }
             })
-            .catch(error => {
-                console.error('Error loading profit by month chart:', error);
+            .catch(msg => {
+                errEl.textContent = typeof msg === 'string' ? msg : 'Could not load report.';
+                errEl.classList.remove('d-none');
             });
     }
 
-    // Load report on page load
+    document.getElementById('btnApplyFilters').addEventListener('click', loadDashboard);
+
     document.addEventListener('DOMContentLoaded', function() {
-        document.getElementById('loadReport').click();
-        // Also load profit by month chart
-        loadProfitByMonthChart();
+        setPresetUI('this_month');
+        loadDashboard();
     });
+})();
 </script>
 {% endblock %}
-

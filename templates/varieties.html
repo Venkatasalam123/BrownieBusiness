@@ -83,23 +83,27 @@
                 <!-- Mobile Card Layout -->
                 <div class="varieties-list">
                     {% for variety in varieties %}
+                    {% set lp = variety_list_prices.get(variety.id, variety.default_price) %}
                     <div class="variety-card mb-3 p-3 border rounded">
                         <!-- Variety Name -->
                         <div class="mb-2">
                             <strong class="variety-name">{{ variety.name }}</strong>
                         </div>
                         
-                        <!-- Default Price -->
+                        <!-- Default Price (combos: sum from Combo Pack Config + packing) -->
                         <div class="mb-3">
                             <span class="badge bg-info fs-6">
-                                <i class="fas fa-rupee-sign me-1"></i>₹{{ "%.2f"|format(variety.default_price) }}
+                                <i class="fas fa-rupee-sign me-1"></i>₹{{ "%.2f"|format(lp) }}
                             </span>
+                            {% if variety.is_combo_pack() %}
+                            <div class="small text-muted mt-1">From combo config (child defaults × qty + extra packing)</div>
+                            {% endif %}
                         </div>
                         
                         <!-- Action Buttons: Update, Delete -->
                         <div class="d-flex gap-2">
                             <!-- Update Button -->
-                            <button type="button" class="btn btn-primary flex-fill" onclick="editVariety({{ variety.id }}, '{{ variety.name }}', {{ variety.default_price }}, {{ variety.get_combo_pack_varieties()|tojson }})" title="Update">
+                            <button type="button" class="btn btn-primary flex-fill" onclick="editVariety({{ variety.id }}, '{{ variety.name }}', {{ lp }}, {{ variety.get_combo_pack_varieties()|tojson }})" title="Update">
                                 <i class="fas fa-edit"></i>
                             </button>
                             
@@ -120,7 +124,7 @@
                                 </div>
                                 <div class="mb-2">
                                     <label class="form-label small">Price (₹)</label>
-                                    <input type="number" class="form-control form-control-lg" name="default_price" value="{{ variety.default_price }}" step="0.01" min="0.01" required id="price-input-{{ variety.id }}">
+                                    <input type="number" class="form-control form-control-lg" name="default_price" value="{{ lp }}" step="0.01" min="0.01" required id="price-input-{{ variety.id }}">
                                 </div>
                                 <div class="mb-2">
                                     <label class="form-label small">Combo Pack Configuration</label>
@@ -169,7 +173,7 @@
                                     <button type="submit" class="btn btn-success flex-fill" title="Save">
                                         <i class="fas fa-check"></i>
                                     </button>
-                                    <button type="button" class="btn btn-secondary flex-fill" onclick="cancelEditVariety({{ variety.id }}, '{{ variety.name }}', {{ variety.default_price }})" title="Cancel">
+                                    <button type="button" class="btn btn-secondary flex-fill" onclick="cancelEditVariety({{ variety.id }}, '{{ variety.name }}', {{ lp }})" title="Cancel">
                                         <i class="fas fa-times"></i>
                                     </button>
                                 </div>
@@ -192,13 +196,14 @@
                         </thead>
                         <tbody>
                             {% for variety in varieties %}
+                            {% set lp = variety_list_prices.get(variety.id, variety.default_price) %}
                             <tr id="variety-row-{{ variety.id }}">
                                 <td><strong>{{ variety.name }}</strong></td>
                                 <td>
-                                    <span class="badge bg-info">₹{{ "%.2f"|format(variety.default_price) }}</span>
+                                    <span class="badge bg-info">₹{{ "%.2f"|format(lp) }}</span>
                                 </td>
                                 <td>
-                                    <button type="button" class="btn btn-sm btn-primary" onclick="editVariety({{ variety.id }}, '{{ variety.name }}', {{ variety.default_price }}, {{ variety.get_combo_pack_varieties()|tojson }})" title="Update">
+                                    <button type="button" class="btn btn-sm btn-primary" onclick="editVariety({{ variety.id }}, '{{ variety.name }}', {{ lp }}, {{ variety.get_combo_pack_varieties()|tojson }})" title="Update">
                                         <i class="fas fa-edit"></i>
                                     </button>
                                 </td>
@@ -220,7 +225,7 @@
                                         </div>
                                         <div class="flex-fill">
                                             <label class="form-label small">Price (₹)</label>
-                                            <input type="number" class="form-control" name="default_price" value="{{ variety.default_price }}" step="0.01" min="0.01" required id="price-input-desktop-{{ variety.id }}">
+                                            <input type="number" class="form-control" name="default_price" value="{{ lp }}" step="0.01" min="0.01" required id="price-input-desktop-{{ variety.id }}">
                                         </div>
                                         <div class="flex-fill">
                                             <label class="form-label small">Combo Pack</label>
@@ -272,7 +277,7 @@
                                             </button>
                                         </div>
                                         <div>
-                                            <button type="button" class="btn btn-sm btn-secondary" onclick="cancelEditVarietyDesktop({{ variety.id }}, '{{ variety.name }}', {{ variety.default_price }})" title="Cancel">
+                                            <button type="button" class="btn btn-sm btn-secondary" onclick="cancelEditVarietyDesktop({{ variety.id }}, '{{ variety.name }}', {{ lp }})" title="Cancel">
                                                 <i class="fas fa-times"></i>
                                             </button>
                                         </div>

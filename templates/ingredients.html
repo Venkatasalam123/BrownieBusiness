@@ -60,7 +60,7 @@
                         <button type="submit" class="btn btn-primary btn-lg">
                             <i class="fas fa-save me-2"></i>Update All Prices
                         </button>
-                        <a href="{{ url_for('index') }}" class="btn btn-secondary btn-lg ms-2">
+                        <a href="{{ url_for('orders') }}" class="btn btn-secondary btn-lg ms-2">
                             <i class="fas fa-times me-2"></i>Cancel
                         </a>
                     </div>
@@ -85,7 +85,11 @@
                             <div class="accordion-item">
                                 <h2 class="accordion-header" id="heading{{ loop.index }}">
                                     <button class="accordion-button {% if loop.index != 1 %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{ loop.index }}">
+                                        {% if variety_info.get(variety_name) and variety_info[variety_name].is_combo_pack %}
+                                        <strong>{{ variety_name }}</strong> - ₹{{ "%.2f"|format(breakdown.cost_per_brownie) }} per combo pack
+                                        {% else %}
                                         <strong>{{ variety_name }}</strong> - ₹{{ "%.2f"|format(breakdown.cost_per_brownie) }} per brownie
+                                        {% endif %}
                                     </button>
                                 </h2>
                                 <div id="collapse{{ loop.index }}" class="accordion-collapse collapse {% if loop.index == 1 %}show{% endif %}" data-bs-parent="#varietyCostBreakdown">
@@ -157,6 +161,10 @@
                     </div>
                 </div>
             </div>
+        </div>
+
+        <div class="mt-4">
+            {% include '_production_cost_panel.html' %}
         </div>
     </div>
 </div>

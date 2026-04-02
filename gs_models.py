@@ -442,6 +442,31 @@ class IngredientPriceFilterQuery:
         return None
 
 
+def _normalize_combo_pack_item_list(items):
+    """Coerce variety id/quantity from JSON (e.g. string ids from Sheets) to int."""
+    if not items:
+        return []
+    out = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        vid = item.get('id')
+        if isinstance(vid, str) and vid.strip().isdigit():
+            vid = int(vid.strip())
+        elif isinstance(vid, (int, float)) and not isinstance(vid, bool):
+            vid = int(vid)
+        qty = item.get('quantity', 1)
+        if isinstance(qty, str) and qty.strip().isdigit():
+            qty = int(qty.strip())
+        elif isinstance(qty, (int, float)) and not isinstance(qty, bool):
+            qty = int(qty)
+        else:
+            qty = 1
+        if vid is not None:
+            out.append({'id': vid, 'quantity': qty})
+    return out
+
+
 # Now define model classes
 class Variety:
     """Variety model wrapper for Google Sheets"""
@@ -473,17 +498,23 @@ class Variety:
             try:
                 import json
                 data = json.loads(self.combo_pack_config)
-                # Check if it's new format (object with items and extra_packing_cost)
+                raw = []
                 if isinstance(data, dict) and 'items' in data:
-                    return data.get('items', [])
-                # Check if it's old format (list of integers)
-                elif isinstance(data, list) and data and isinstance(data[0], int):
-                    # Convert old format to new format
-                    return [{"id": vid, "quantity": 1} for vid in data]
-                # Medium format (list of dicts)
-                elif isinstance(data, list):
-                    return data
-            except:
+                    raw = data.get('items', [])
+                elif isinstance(data, list) and data:
+                    if all(isinstance(x, int) for x in data):
+                        raw = [{"id": vid, "quantity": 1} for vid in data]
+                    elif all(
+                        isinstance(x, (int, str)) and str(x).strip().lstrip('-').isdigit()
+                        for x in data
+                    ):
+                        raw = [
+                            {"id": int(str(x).strip()), "quantity": 1} for x in data
+                        ]
+                    else:
+                        raw = data
+                return _normalize_combo_pack_item_list(raw)
+            except (json.JSONDecodeError, TypeError, ValueError):
                 return []
         return []
     
@@ -584,6 +615,8 @@ class Order:
     
     def to_dict(self):
         effective_quantity = max(0, (self.quantity or 0) - (self.returns or 0))
+        goods = float(self.price) * effective_quantity if self.price else 0.0
+        courier = float(self.courier_price) if self.courier_price else 0.0
         return {
             'id': self.id,
             'variety_id': self.variety_id,
@@ -595,9 +628,9 @@ class Order:
             'delivery_date': self.delivery_date.isoformat() if self.delivery_date else None,
             'payment_status': self.payment_status,
             'paid_amount': float(self.paid_amount) if self.paid_amount else 0.0,
-            'courier_price': float(self.courier_price) if self.courier_price else 0.0,
+            'courier_price': courier,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'total': float(self.price * effective_quantity) if self.price and effective_quantity else 0.0
+            'total': goods + courier,
         }
 
 

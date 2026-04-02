@@ -98,7 +98,12 @@
                         <div class="col-12 mb-3">
                             <div class="alert alert-info">
                                 {% set effective_qty = (order.quantity or 0) - (order.returns or 0) %}
-                                <strong>Total Amount:</strong> <span id="total_display">₹{{ "%.2f"|format(order.price * effective_qty if effective_qty > 0 else 0) }}</span>
+                                {% set goods_part = (order.price|float) * effective_qty if effective_qty > 0 else 0 %}
+                                {% set courier_part = (order.courier_price|float) if order.courier_price else 0 %}
+                                <strong>Total Amount:</strong> <span id="total_display">₹{{ "%.2f"|format(goods_part + courier_part) }}</span>
+                                {% if courier_part > 0 %}
+                                <br><small class="text-muted">Goods: ₹{{ "%.2f"|format(goods_part) }} + Courier: ₹{{ "%.2f"|format(courier_part) }}</small>
+                                {% endif %}
                                 {% if order.returns and order.returns > 0 %}
                                 <br><small class="text-muted">(Quantity: {{ order.quantity }} - Returns: {{ order.returns }} = Effective: {{ effective_qty }})</small>
                                 {% endif %}
@@ -136,9 +141,15 @@
             return Math.max(0, quantity - returns);
         }
 
-        function updatePaidAmountState() {
+        function orderTotalReceivable() {
             const effectiveQty = getEffectiveQuantity();
-            const totalAmount = parseFloat(priceInput.value || 0) * effectiveQty;
+            const goods = parseFloat(priceInput.value || 0) * effectiveQty;
+            const courier = parseFloat(courierInput.value || 0) || 0;
+            return goods + courier;
+        }
+
+        function updatePaidAmountState() {
+            const totalAmount = orderTotalReceivable();
             if (paymentStatusSelect.value === 'paid') {
                 paidAmountInput.value = totalAmount.toFixed(2);
                 paidAmountInput.disabled = true;
@@ -155,13 +166,22 @@
 
         function updateTotal() {
             const effectiveQty = getEffectiveQuantity();
-            const totalAmount = parseFloat(priceInput.value || 0) * effectiveQty;
+            const goods = parseFloat(priceInput.value || 0) * effectiveQty;
+            const courier = parseFloat(courierInput.value || 0) || 0;
+            const totalAmount = goods + courier;
             const quantity = parseFloat(quantityInput.value || 0);
             const returns = parseFloat(returnsInput.value || 0);
-            
+
             let displayText = '₹' + totalAmount.toFixed(2);
-            if (returns > 0) {
-                displayText += ` <small class="text-muted">(Qty: ${quantity} - Returns: ${returns} = Effective: ${effectiveQty})</small>`;
+            if (returns > 0 || courier > 0) {
+                const parts = [];
+                if (returns > 0) {
+                    parts.push(`Qty: ${quantity} − Returns: ${returns} = ${effectiveQty} units`);
+                }
+                if (courier > 0) {
+                    parts.push(`Courier: ₹${courier.toFixed(2)}`);
+                }
+                displayText += ` <small class="text-muted">(${parts.join('; ')})</small>`;
             }
             document.getElementById('total_display').innerHTML = displayText;
         }
@@ -185,6 +205,10 @@
             if (returns < 0) {
                 returnsInput.value = 0;
             }
+            updateTotal();
+            updatePaidAmountState();
+        });
+        courierInput.addEventListener('input', function() {
             updateTotal();
             updatePaidAmountState();
         });

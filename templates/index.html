@@ -19,7 +19,7 @@
                         <select class="form-select form-select-lg" id="variety_id" name="variety_id" required>
                             <option value="">Select Variety</option>
                             {% for variety in varieties %}
-                            <option value="{{ variety.id }}" data-price="{{ variety.default_price }}">{{ variety.name }}</option>
+                            <option value="{{ variety.id }}" data-price="{{ variety_list_prices.get(variety.id, variety.default_price) }}">{{ variety.name }}</option>
                             {% endfor %}
                         </select>
                     </div>

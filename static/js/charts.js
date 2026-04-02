@@ -27,14 +27,14 @@ function createPieChart(canvasId, labels, values, title) {
         },
         options: {
             responsive: true,
-            maintainAspectRatio: true,
+            maintainAspectRatio: false,
             plugins: {
                 legend: {
                     position: 'bottom',
                     labels: {
-                        padding: 15,
+                        padding: 10,
                         font: {
-                            size: 12
+                            size: 11
                         }
                     }
                 },
@@ -58,21 +58,27 @@ function createPieChart(canvasId, labels, values, title) {
  * Generate colors for pie chart slices
  */
 function generateColors(count) {
-    // Updated color palette with better contrast and modern colors
+    // Distinct hues for pie slices (easy to tell apart); not tied to app brown theme
     const baseColors = [
-        'rgba(99, 102, 241, 0.8)',  // Indigo
-        'rgba(236, 72, 153, 0.8)',  // Pink
-        'rgba(14, 165, 233, 0.8)',  // Sky Blue
-        'rgba(34, 197, 94, 0.8)',   // Green
-        'rgba(251, 146, 60, 0.8)',  // Orange
-        'rgba(168, 85, 247, 0.8)',  // Purple
-        'rgba(59, 130, 246, 0.8)',  // Blue
-        'rgba(239, 68, 68, 0.8)',   // Red
-        'rgba(234, 179, 8, 0.8)',   // Yellow
-        'rgba(20, 184, 166, 0.8)',  // Teal
-        'rgba(249, 115, 22, 0.8)',  // Orange Red
-        'rgba(139, 92, 246, 0.8)'   // Violet
+        'rgba(59, 130, 246, 0.88)',   // blue
+        'rgba(244, 63, 94, 0.88)',    // rose
+        'rgba(16, 185, 129, 0.88)',   // emerald
+        'rgba(245, 158, 11, 0.88)',   // amber
+        'rgba(139, 92, 246, 0.88)',   // violet
+        'rgba(236, 72, 153, 0.88)',   // pink
+        'rgba(6, 182, 212, 0.88)',    // cyan
+        'rgba(234, 88, 12, 0.88)',    // orange
+        'rgba(99, 102, 241, 0.88)',   // indigo
+        'rgba(132, 204, 22, 0.88)',   // lime
+        'rgba(168, 85, 247, 0.88)',   // purple
+        'rgba(20, 184, 166, 0.88)',   // teal
+        'rgba(251, 113, 133, 0.88)',  // light red
+        'rgba(45, 212, 191, 0.88)',   // aqua
+        'rgba(250, 204, 21, 0.88)',   // yellow
+        'rgba(217, 70, 239, 0.88)'    // fuchsia
     ];
+
+    const toSolidBorder = (rgba) => rgba.replace(/,\s*[\d.]+\)$/, ', 1)');
 
     const backgrounds = [];
     const borders = [];
@@ -80,8 +86,7 @@ function generateColors(count) {
     for (let i = 0; i < count; i++) {
         const color = baseColors[i % baseColors.length];
         backgrounds.push(color);
-        // Darker version for border
-        borders.push(color.replace('0.8', '1'));
+        borders.push(toSolidBorder(color));
     }
 
     return {
@@ -93,7 +98,7 @@ function generateColors(count) {
 /**
  * Create a bar chart
  */
-function createBarChart(canvasId, labels, values, title, color = 'rgba(54, 162, 235, 0.8)') {
+function createBarChart(canvasId, labels, values, title, color = 'rgba(134, 75, 47, 0.8)') {
     const ctx = document.getElementById(canvasId);
     
     if (!ctx) {

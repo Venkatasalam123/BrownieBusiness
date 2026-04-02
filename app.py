@@ -1,6 +1,9 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 from datetime import datetime, date, timezone, timedelta
 from decimal import Decimal
+from collections import defaultdict
+import calendar
+import json
 from config import USE_GOOGLE_SHEETS
 
 # Import appropriate models based on configuration
@@ -12,6 +15,7 @@ if USE_GOOGLE_SHEETS:
         def __getattr__(self, name):
             return getattr(gs_session, name)
     db_session = MockSession()
+    
 else:
     from models import db, Variety, Shop, Order, IngredientPrice
     from sqlalchemy import func, extract, text
@@ -51,6 +55,152 @@ def _update_miscellaneous_cost():
             db_session.commit()
 
 
+def _normalize_combo_items_for_compare(items):
+    """List of (variety_id, quantity) for stable comparison."""
+    out = []
+    for item in items or []:
+        if isinstance(item, dict):
+            out.append((item.get('id'), int(item.get('quantity', 1))))
+        else:
+            out.append((item, 1))
+    return out
+
+
+def _variety_by_name_ci(name):
+    """Find variety by case-insensitive name (Sheets often use 'Combo pack' vs 'Combo Pack')."""
+    target = (name or '').strip().lower()
+    if not target:
+        return None
+    for v in Variety.query.all():
+        if (v.name or '').strip().lower() == target:
+            return v
+    return None
+
+
+def _apply_standard_combo_pack_contents():
+    """Set PCM/PCS combo packs to the standard brownie lineups; totals follow ingredient breakdown."""
+    # Keys are lowercased; matches any casing on the variety row (e.g. Combo pack 3 - PCS).
+    STANDARD_COMBO_LINEUPS = {
+        'combo pack 1 - pcm': [
+            'Pista Brownie',
+            'Classic Brownie',
+            'Mango Brownie',
+        ],
+        'combo pack 3 - pcs': [
+            'Pineapple Brownie',
+            'Classic Brownie',
+            'Strawberry Brownie',
+        ],
+    }
+
+    for combo in Variety.query.all():
+        if not combo.is_combo_pack():
+            continue
+        combo_key = (combo.name or '').strip().lower()
+        child_names = STANDARD_COMBO_LINEUPS.get(combo_key)
+        if not child_names:
+            continue
+
+        resolved_items = []
+        missing = []
+        for child_name in child_names:
+            v = _variety_by_name_ci(child_name)
+            if v and not v.is_combo_pack():
+                resolved_items.append({'id': v.id, 'quantity': 1})
+            else:
+                missing.append(child_name)
+        if missing:
+            print(
+                f"⚠ Standard combo '{combo.name}' not updated — "
+                f"create these varieties first: {', '.join(missing)}"
+            )
+            continue
+
+        desired_seq = _normalize_combo_items_for_compare(resolved_items)
+        current_seq = _normalize_combo_items_for_compare(combo.get_combo_pack_varieties())
+        if current_seq == desired_seq:
+            continue
+
+        extra_packing = 5.0
+        if combo.combo_pack_config:
+            try:
+                data = json.loads(combo.combo_pack_config)
+                if isinstance(data, dict) and 'extra_packing_cost' in data:
+                    extra_packing = float(data['extra_packing_cost'])
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+        new_config = json.dumps({
+            'items': resolved_items,
+            'extra_packing_cost': extra_packing,
+        })
+
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.update_variety(
+                combo.id,
+                combo.name,
+                Decimal(str(combo.default_price)),
+                new_config,
+            )
+        else:
+            combo.combo_pack_config = new_config
+            db_session.commit()
+        print(f"✓ Updated '{combo.name}' contents: {', '.join(child_names)}")
+
+
+def get_variety_list_price(variety):
+    """List/default selling price: regular variety uses default_price; combo uses Combo Pack Config —
+    sum of (each child variety's default_price × quantity) plus extra_packing_cost from JSON."""
+    if not variety:
+        return 0.0
+    if not variety.is_combo_pack():
+        return float(variety.default_price or 0)
+    total = 0.0
+    for item in variety.get_combo_pack_varieties():
+        vid = item.get('id')
+        qty = int(item.get('quantity', 1))
+        child = Variety.query.get(vid)
+        if child and not child.is_combo_pack():
+            total += float(child.default_price or 0) * qty
+    total += float(variety.get_extra_packing_cost())
+    return round(total, 2)
+
+
+def variety_list_prices_map(varieties_seq):
+    """Map variety id -> list price (computed for combos)."""
+    return {v.id: get_variety_list_price(v) for v in varieties_seq}
+
+
+def _sync_combo_pack_default_prices_from_config():
+    """Set each combo row's stored Default Price to sum(child defaults × qty) + extra packing."""
+    modified_sqlite = False
+    for v in Variety.query.all():
+        if not v.is_combo_pack():
+            continue
+        computed = get_variety_list_price(v)
+        stored = float(v.default_price or 0)
+        if abs(stored - computed) < 0.01:
+            continue
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.update_variety(
+                v.id,
+                v.name,
+                Decimal(str(computed)),
+                v.combo_pack_config or '',
+            )
+            print(f"✓ Synced default price for '{v.name}': ₹{stored:.2f} → ₹{computed:.2f}")
+        else:
+            v.default_price = Decimal(str(computed))
+            modified_sqlite = True
+            print(f"✓ Synced default price for '{v.name}': ₹{stored:.2f} → ₹{computed:.2f}")
+    if modified_sqlite:
+        db_session.commit()
+
+
 if not USE_GOOGLE_SHEETS:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///brownie_sales.db'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -62,6 +212,8 @@ if not USE_GOOGLE_SHEETS:
         _initialize_default_ingredient_prices()
         # Update Miscellaneous cost if needed
         _update_miscellaneous_cost()
+        _apply_standard_combo_pack_contents()
+        _sync_combo_pack_default_prices_from_config()
 else:
     db.init_app(app)
     # Initialize Google Sheets (this will also initialize ingredient prices)
@@ -69,6 +221,8 @@ else:
         db.create_all()
         # Update Miscellaneous cost if needed
         _update_miscellaneous_cost()
+        _apply_standard_combo_pack_contents()
+        _sync_combo_pack_default_prices_from_config()
 
 
 def _initialize_default_ingredient_prices():
@@ -262,6 +416,8 @@ def get_cost_breakdown(variety_name):
         'cost_per_brownie': 0
     }
     
+    variety_lower = variety_name.lower()
+    
     # Ingredients needed for 16 brownies
     butter_g = 235
     egg_count = 4
@@ -270,6 +426,12 @@ def get_cost_breakdown(variety_name):
     vanilla_essence_ml = 4
     maida_ragi_g = 125
     compound_g = 400
+    # Ragi-style milk + white compound (standard Ragi 25g each; Premium Ragi 40g each)
+    ragi_milk_white_compound_g = 25
+    if 'premium ragi' in variety_lower:
+        white_sugar_g = 0
+        brown_sugar_g = 104  # 52g white sugar replaced by brown + 52g brown (same as Ragi total sugar)
+        ragi_milk_white_compound_g = 40
     
     # Base ingredients
     butter = get_ingredient_price('Butter')
@@ -303,7 +465,7 @@ def get_cost_breakdown(variety_name):
             breakdown['total_cost_16_brownies'] += cost
     
     white_sugar = get_ingredient_price('White Sugar')
-    if white_sugar:
+    if white_sugar_g > 0 and white_sugar:
         price_per_g = white_sugar.get_price_per_gram()
         if price_per_g:
             cost = white_sugar_g * price_per_g
@@ -363,7 +525,6 @@ def get_cost_breakdown(variety_name):
             breakdown['total_cost_16_brownies'] += cost
     
     # Variety-specific compound
-    variety_lower = variety_name.lower()
     if 'mango' in variety_lower:
         compound = get_ingredient_price('Mango Compound')
         compound_name = 'Mango Compound'
@@ -415,16 +576,17 @@ def get_cost_breakdown(variety_name):
                 })
                 breakdown['total_cost_16_brownies'] += cost
     
-    # Milk compound and white compound (only for Ragi Brownie)
+    # Milk compound and white compound (Ragi Brownie and Premium Ragi Brownie)
     if 'ragi' in variety_lower:
         milk_compound = get_ingredient_price('Milk Compound')
         if milk_compound:
             price_per_g = milk_compound.get_price_per_gram()
             if price_per_g:
-                cost = 25 * price_per_g
+                mw = ragi_milk_white_compound_g
+                cost = mw * price_per_g
                 breakdown['ingredients'].append({
                     'name': 'Milk Compound',
-                    'quantity': '25g',
+                    'quantity': f'{mw}g',
                     'package_price': float(milk_compound.price),
                     'package_size': f'{milk_compound.unit}',
                     'price_per_unit': price_per_g,
@@ -436,10 +598,11 @@ def get_cost_breakdown(variety_name):
         if white_compound:
             price_per_g = white_compound.get_price_per_gram()
             if price_per_g:
-                cost = 25 * price_per_g
+                mw = ragi_milk_white_compound_g
+                cost = mw * price_per_g
                 breakdown['ingredients'].append({
                     'name': 'White Compound',
-                    'quantity': '25g',
+                    'quantity': f'{mw}g',
                     'package_price': float(white_compound.price),
                     'package_size': f'{white_compound.unit}',
                     'price_per_unit': price_per_g,
@@ -547,12 +710,26 @@ def get_cost_breakdown(variety_name):
     return breakdown
 
 
-def calculate_brownies_from_price(price):
+def _uses_three_regular_to_seven_small_cut(variety_name):
+    """Classic / Ragi / Premium Ragi sold under ₹15 = small cut: 3 regular brownies → 7 pieces."""
+    if not variety_name or not str(variety_name).strip():
+        return False
+    key = str(variety_name).strip().lower()
+    return key in (
+        'classic brownie',
+        'ragi brownie',
+        'premium ragi brownie',
+    )
+
+
+def calculate_brownies_from_price(price, variety_name=None):
     """
-    Calculate number of brownies based on price per unit.
-    
+    Brownie-equivalents per ordered unit (for cost and production tallies).
+
     Rules:
-    1. If price < 15: 0.5 brownie
+    1. If price < 15:
+       - Classic Brownie, Ragi Brownie, Premium Ragi Brownie: 3/7 (three regulars cut into seven smalls)
+       - Else: 0.5 brownie
     2. If price 25-35: 1 brownie
     3. If price 40-55: 1.33 brownie
     4. If price >= 160: kg-based calculation
@@ -565,8 +742,9 @@ def calculate_brownies_from_price(price):
     """
     price_float = float(price)
     
-    # Rule 1: Price < 15 → 0.5 brownie
     if price_float < 15:
+        if _uses_three_regular_to_seven_small_cut(variety_name):
+            return 3.0 / 7.0
         return 0.5
     
     # Rule 4: Price >= 160 → kg-based calculation
@@ -603,53 +781,139 @@ def calculate_brownies_from_price(price):
     return 1.0
 
 
+def _effective_order_quantity(order):
+    """Units billed after returns."""
+    return max(0, (order.quantity or 0) - (order.returns or 0))
+
+
+def _order_courier_float(order):
+    """Parcel / courier charge (₹) on the order."""
+    return float(order.courier_price) if order.courier_price else 0.0
+
+
+def order_goods_revenue(order):
+    """Product line revenue: unit price × effective quantity (after returns)."""
+    return float(order.price) * _effective_order_quantity(order)
+
+
+def order_total_receivable(order):
+    """Amount the customer owes for the order: goods + parcel/courier."""
+    return order_goods_revenue(order) + _order_courier_float(order)
+
+
 def calculate_total_cost_and_profit(orders):
     """Calculate total ingredient cost and profit for a list of orders"""
     if IngredientPrice is None:
         # Fallback to 30% margin if ingredient prices not available
-        total_sales = sum(float(order.price * max(0, (order.quantity or 0) - (order.returns or 0))) for order in orders)
-        return total_sales * 0.30, total_sales * 0.30
-    
+        gross = sum(order_total_receivable(o) for o in orders)
+        return gross * 0.30, gross * 0.30
+
     total_cost = 0
-    total_sales = 0
-    
+    goods_revenue = 0
+
     for order in orders:
         variety = order.variety
         variety_name = variety.name if variety else 'Classic Brownie'
-        
-        # Calculate effective quantity (quantity - returns)
-        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-        
-        # Calculate cost per brownie for this variety using get_cost_breakdown (same as ingredients page)
+
+        effective_quantity = _effective_order_quantity(order)
+
         breakdown = get_cost_breakdown(variety_name)
         cost_per_brownie = breakdown.get('cost_per_brownie') if breakdown else None
-        
+
         if cost_per_brownie is None:
             continue
-        
-        # For combo packs, cost_per_brownie is actually cost per combo pack
-        variety = order.variety
+
         if variety and variety.is_combo_pack():
-            # For combo packs, cost_per_brownie is already the total cost of one combo pack
-            # So we multiply directly by effective quantity (number of combo packs)
             total_cost += cost_per_brownie * effective_quantity
-            # For sales, always use actual order.price from database (sum of all order prices)
-            total_sales += float(order.price * effective_quantity)
+            goods_revenue += order_goods_revenue(order)
         else:
-            # For regular brownies, determine brownie count based on price
             order_price = float(order.price)
             order_quantity = float(effective_quantity)
-            
-            brownies_per_unit = calculate_brownies_from_price(order_price)
+
+            brownies_per_unit = calculate_brownies_from_price(order_price, variety_name)
             brownies_count = brownies_per_unit * order_quantity
             total_cost += brownies_count * cost_per_brownie
-            total_sales += float(order.price * effective_quantity)
-    
-    # Subtract total courier costs from profit
-    total_courier = sum(float(order.courier_price) if order.courier_price else 0.0 for order in orders)
-    
-    profit = total_sales - total_cost - total_courier
+            goods_revenue += order_goods_revenue(order)
+
+    total_courier = sum(_order_courier_float(o) for o in orders)
+    profit = goods_revenue - total_cost - total_courier
     return profit, total_cost
+
+
+def aggregate_variety_cost_breakdown_from_orders(orders):
+    """Per-variety sales, ingredient cost, effective quantity, and brownie-equivalent count."""
+    variety_cost_breakdown = {}
+    for order in orders:
+        variety = order.variety
+        variety_name = variety.name if variety else 'Unknown'
+
+        if variety_name not in variety_cost_breakdown:
+            variety_cost_breakdown[variety_name] = {
+                'sales': 0,
+                'courier': 0,
+                'cost': 0,
+                'quantity': 0,
+                'brownies_count': 0,
+            }
+
+        breakdown = get_cost_breakdown(variety_name)
+        cost_per_brownie = breakdown.get('cost_per_brownie') if breakdown else None
+
+        if cost_per_brownie is None:
+            continue
+
+        effective_quantity = _effective_order_quantity(order)
+        order_quantity = float(effective_quantity)
+
+        if variety and variety.is_combo_pack():
+            order_cost = cost_per_brownie * effective_quantity
+            g_rev = order_goods_revenue(order)
+            brownies_per_combo = get_brownies_in_combo_pack(variety)
+            brownies_count = brownies_per_combo * effective_quantity
+        else:
+            order_price = float(order.price)
+            brownies_per_unit = calculate_brownies_from_price(order_price, variety_name)
+            brownies_count = brownies_per_unit * order_quantity
+            order_cost = brownies_count * cost_per_brownie
+            g_rev = order_goods_revenue(order)
+
+        variety_cost_breakdown[variety_name]['sales'] += g_rev
+        variety_cost_breakdown[variety_name]['courier'] += _order_courier_float(order)
+        variety_cost_breakdown[variety_name]['cost'] += order_cost
+        variety_cost_breakdown[variety_name]['quantity'] += order_quantity
+        variety_cost_breakdown[variety_name]['brownies_count'] += brownies_count
+
+    return variety_cost_breakdown
+
+
+def format_variety_breakdown_rows(variety_cost_breakdown):
+    """Sorted rows for reports; goods sales + courier in totals; profit nets parcel cost."""
+    variety_breakdown = []
+    for variety_name, data in variety_cost_breakdown.items():
+        g_sales = data['sales']
+        courier = float(data.get('courier') or 0)
+        revenue = g_sales + courier
+        profit = g_sales - data['cost'] - courier
+        profit_pct = (profit / revenue * 100) if revenue > 0 else 0
+        variety_obj = Variety.query.filter_by(name=variety_name).first()
+        if variety_obj and variety_obj.is_combo_pack():
+            cost_per_unit = round(data['cost'] / data['quantity'], 2) if data['quantity'] > 0 else 0
+        else:
+            cost_per_unit = round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
+        avg_sale_price = round(g_sales / data['quantity'], 2) if data['quantity'] > 0 else 0
+        variety_breakdown.append({
+            'name': variety_name,
+            'sales': round(revenue, 2),
+            'cost': round(data['cost'], 2),
+            'profit': round(profit, 2),
+            'profit_percentage': round(profit_pct, 2),
+            'quantity': data['quantity'],
+            'brownies_count': round(data['brownies_count'], 2),
+            'cost_per_brownie': cost_per_unit,
+            'avg_sale_price': avg_sale_price,
+        })
+    variety_breakdown.sort(key=lambda x: x['sales'], reverse=True)
+    return variety_breakdown
 
 
 @app.route('/')
@@ -657,7 +921,13 @@ def index():
     """Dashboard with quick order entry form"""
     varieties = Variety.query.order_by(Variety.name).all()
     shops = Shop.query.order_by(Shop.name).all()
-    return render_template('index.html', varieties=varieties, shops=shops)
+    variety_list_prices = variety_list_prices_map(varieties)
+    return render_template(
+        'index.html',
+        varieties=varieties,
+        shops=shops,
+        variety_list_prices=variety_list_prices,
+    )
 
 
 @app.route('/orders/add', methods=['POST'])
@@ -694,13 +964,13 @@ def add_order():
         if payment_status not in ['paid', 'unpaid', 'partial']:
             payment_status = 'unpaid'
         
-        # Validate paid amount based on effective quantity
-        total_amount = float(price * effective_quantity)
+        goods_amt = float(price) * effective_quantity
+        total_amount = goods_amt + float(courier_price or 0)
         if payment_status == 'paid':
             paid_amount = total_amount
         elif payment_status == 'partial':
             if paid_amount <= 0 or paid_amount >= total_amount:
-                flash('Partial payment amount must be greater than 0 and less than total amount', 'error')
+                flash('Partial payment amount must be greater than 0 and less than total order amount (including courier)', 'error')
                 return redirect(url_for('index'))
         else:  # unpaid
             paid_amount = 0
@@ -746,7 +1016,7 @@ def add_order():
             )
             db_session.add(order)
             db_session.commit()
-            order_total = float(order.price * effective_quantity)
+            order_total = order_total_receivable(order)
         
         flash(f'Order added successfully! Total: ₹{order_total:.2f}', 'success')
         return redirect(url_for('index'))
@@ -763,7 +1033,13 @@ def varieties():
     varieties_list = Variety.query.order_by(Variety.name).all()
     # Get all varieties for combo pack selection (exclude combo packs themselves)
     all_varieties = [v for v in varieties_list if not v.is_combo_pack()]
-    return render_template('varieties.html', varieties=varieties_list, all_varieties=all_varieties)
+    variety_list_prices = variety_list_prices_map(varieties_list)
+    return render_template(
+        'varieties.html',
+        varieties=varieties_list,
+        all_varieties=all_varieties,
+        variety_list_prices=variety_list_prices,
+    )
 
 
 @app.route('/varieties/add', methods=['POST'])
@@ -810,15 +1086,25 @@ def add_variety():
                 "items": combo_items,
                 "extra_packing_cost": extra_packing_cost
             })
+            proxy = Variety(
+                name=name,
+                default_price=Decimal('0'),
+                combo_pack_config=combo_pack_config,
+            )
+            default_price = get_variety_list_price(proxy)
         else:
             combo_pack_config = ''  # Empty string for regular variety
+        
+        if default_price is None or default_price <= 0:
+            flash('Default price must be a positive number', 'error')
+            return redirect(url_for('varieties'))
         
         if USE_GOOGLE_SHEETS:
             from google_sheets import get_gs_db
             gs = get_gs_db()
             gs.add_variety(name, Decimal(str(default_price)), combo_pack_config)
         else:
-            variety = Variety(name=name, default_price=Decimal(str(default_price)), 
+            variety = Variety(name=name, default_price=Decimal(str(default_price)),
                             combo_pack_config=combo_pack_config)
             db_session.add(variety)
             db_session.commit()
@@ -877,8 +1163,19 @@ def update_variety(id):
                 "items": combo_items,
                 "extra_packing_cost": extra_packing_cost
             })
+            proxy = Variety(
+                id=variety.id,
+                name=name,
+                default_price=variety.default_price,
+                combo_pack_config=combo_pack_config,
+            )
+            default_price = get_variety_list_price(proxy)
         else:
             combo_pack_config = ''  # Empty string to clear combo pack config
+        
+        if default_price is None or default_price <= 0:
+            flash('Default price must be a positive number', 'error')
+            return redirect(url_for('varieties'))
         
         if USE_GOOGLE_SHEETS:
             # For Google Sheets, update via API
@@ -933,14 +1230,13 @@ def shops():
         unpaid_count = 0
         
         for order in orders:
-            effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-            order_total = float(order.price * effective_quantity)
+            order_total = order_total_receivable(order)
             paid_amt = float(order.paid_amount) if order.paid_amount else 0
             pending_amt = order_total - paid_amt
             if pending_amt > 0:
                 total_pending += pending_amt
                 unpaid_count += 1
-        
+
         shops_with_pending.append({
             'shop': shop,
             'pending': total_pending,
@@ -1057,8 +1353,7 @@ def orders():
     if pending_only:
         filtered_orders = []
         for order in all_orders:
-            effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-            order_total = float(order.price * effective_quantity)
+            order_total = order_total_receivable(order)
             paid_amt = float(order.paid_amount) if order.paid_amount else 0
             pending_amt = order_total - paid_amt
             if pending_amt > 0:
@@ -1088,8 +1383,7 @@ def orders():
             orders_by_month[month_key]['dates'][date_str] = {'orders': [], 'date_total': 0, 'date_pending': 0}
         
         orders_by_month[month_key]['dates'][date_str]['orders'].append(order)
-        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-        order_total = float(order.price * effective_quantity)
+        order_total = order_total_receivable(order)
         paid_amt = float(order.paid_amount) if order.paid_amount else 0
         pending_amt = order_total - paid_amt
         
@@ -1117,57 +1411,130 @@ def orders():
     return render_template('orders.html', months_grouped=months_grouped, total_sales=total_sales, total_pending=total_pending, total_orders=len(all_orders), all_shops=all_shops, selected_shop=selected_shop, shop_id_filter=shop_id_filter, pending_only=pending_only)
 
 
-@app.route('/ingredients', methods=['GET', 'POST'])
-def ingredients():
-    """Ingredients cost management page"""
-    if request.method == 'POST':
-        try:
-            # Update all ingredient prices
-            ingredients_list = IngredientPrice.query.all()
-            for ingredient in ingredients_list:
-                price_key = f'price_{ingredient.id}'
-                new_price = request.form.get(price_key, type=float)
-                if new_price is not None and new_price >= 0:
-                    if USE_GOOGLE_SHEETS:
-                        # For Google Sheets, update via API
-                        from google_sheets import get_gs_db
-                        gs = get_gs_db()
-                        gs.update_ingredient_price(
-                            ingredient.id,
-                            ingredient.name,
-                            Decimal(str(new_price)),
-                            ingredient.unit,
-                            ingredient.package_size,
-                            ingredient.package_unit
-                        )
-                    else:
-                        # For SQLite, update the object and commit
-                        ingredient.price = Decimal(str(new_price))
-                        ingredient.updated_at = datetime.utcnow()
-            
-            if not USE_GOOGLE_SHEETS:
-                db_session.commit()
-            flash('Ingredient prices updated successfully!', 'success')
-            return redirect(url_for('ingredients'))
-        except Exception as e:
-            if not USE_GOOGLE_SHEETS:
-                db_session.rollback()
-            flash(f'Error updating ingredient prices: {str(e)}', 'error')
-    
-    # GET request - show current prices
+def _available_years_from_orders():
+    current_year = datetime.now().year
+    if USE_GOOGLE_SHEETS:
+        all_orders = Order.query.all()
+        years = sorted(
+            set(order.delivery_date.year for order in all_orders if order.delivery_date),
+            reverse=True,
+        )
+    else:
+        years = db.session.query(extract('year', Order.delivery_date).label('year')).distinct().order_by(text('year desc')).all()
+        years = [int(y[0]) for y in years if y[0]]
+    return years if years else [current_year]
+
+
+def _compute_monthly_production_breakdown(
+    selected_year,
+    selected_month,
+    egg_price_per_piece,
+    sugar_price_per_kg,
+    brown_sugar_price_per_kg,
+    maida_price_per_kg,
+):
+    """Egg/sugar/maida production cost for orders in a calendar month."""
+    if USE_GOOGLE_SHEETS:
+        all_orders = Order.query.all()
+        orders = [
+            order
+            for order in all_orders
+            if order.delivery_date
+            and order.delivery_date.year == selected_year
+            and order.delivery_date.month == selected_month
+        ]
+    else:
+        orders = Order.query.filter(
+            extract('year', Order.delivery_date) == selected_year,
+            extract('month', Order.delivery_date) == selected_month,
+        ).all()
+
+    total_brownies = 0
+    for order in orders:
+        variety = order.variety
+        variety_name = variety.name if variety else None
+        order_quantity = float(_effective_order_quantity(order))
+
+        if variety and variety.is_combo_pack():
+            brownies_per_combo = get_brownies_in_combo_pack(variety)
+            brownies_for_order = brownies_per_combo * order_quantity
+        else:
+            order_price = float(order.price)
+            brownies_per_unit = calculate_brownies_from_price(order_price, variety_name)
+            brownies_for_order = brownies_per_unit * order_quantity
+
+        total_brownies += brownies_for_order
+
+    batches_of_4 = total_brownies / 4.0
+    total_eggs_needed = batches_of_4
+    total_sugar_needed_kg = (batches_of_4 * 13) / 1000.0
+    total_brown_sugar_needed_kg = (batches_of_4 * 13) / 1000.0
+    total_maida_needed_kg = (batches_of_4 * 30) / 1000.0
+
+    egg_cost = total_eggs_needed * egg_price_per_piece
+    sugar_cost = total_sugar_needed_kg * sugar_price_per_kg
+    brown_sugar_cost = total_brown_sugar_needed_kg * brown_sugar_price_per_kg
+    maida_cost = total_maida_needed_kg * maida_price_per_kg
+    total_cost = egg_cost + sugar_cost + brown_sugar_cost + maida_cost
+
+    return {
+        'selected_year': selected_year,
+        'selected_month': selected_month,
+        'month_name': datetime(selected_year, selected_month, 1).strftime('%B %Y'),
+        'total_brownies': total_brownies,
+        'total_orders': len(orders),
+        'egg': {
+            'quantity': total_eggs_needed,
+            'unit': 'pieces',
+            'price_per_unit': egg_price_per_piece,
+            'total_cost': egg_cost,
+        },
+        'sugar': {
+            'quantity': total_sugar_needed_kg,
+            'unit': 'kg',
+            'price_per_unit': sugar_price_per_kg,
+            'total_cost': sugar_cost,
+        },
+        'brown_sugar': {
+            'quantity': total_brown_sugar_needed_kg,
+            'unit': 'kg',
+            'price_per_unit': brown_sugar_price_per_kg,
+            'total_cost': brown_sugar_cost,
+        },
+        'maida': {
+            'quantity': total_maida_needed_kg,
+            'unit': 'kg',
+            'price_per_unit': maida_price_per_kg,
+            'total_cost': maida_cost,
+        },
+        'total_cost': total_cost,
+    }
+
+
+def _ingredients_page_data(
+    breakdown=None,
+    selected_year=None,
+    selected_month=None,
+    egg_price=None,
+    sugar_price=None,
+    brown_sugar_price=None,
+    maida_price=None,
+):
+    current_month = datetime.now().month
+    current_year = datetime.now().year
+    available_years = _available_years_from_orders()
+
     ingredients_list = IngredientPrice.query.order_by(IngredientPrice.name).all()
-    
-    # Get cost breakdown for all varieties
     varieties = Variety.query.order_by(Variety.name).all()
     variety_breakdowns = {}
-    variety_info = {}  # Store variety info to identify combo packs
-    variety_id_to_name = {}  # Map variety IDs to names for display
-    
+    variety_info = {}
+    variety_id_to_name = {}
+
     for variety in varieties:
         variety_id_to_name[variety.id] = variety.name
-        breakdown = get_cost_breakdown(variety.name)
-        if breakdown:
-            variety_breakdowns[variety.name] = breakdown
+        vb = get_cost_breakdown(variety.name)
+        if vb:
+            variety_breakdowns[variety.name] = vb
             combo_items_display = []
             if variety.is_combo_pack():
                 combo_items = variety.get_combo_pack_varieties()
@@ -1180,341 +1547,387 @@ def ingredients():
                     else:
                         var_name = variety_id_to_name.get(item, f'Variety {item}')
                         combo_items_display.append(f'1x {var_name}')
-            
+
             variety_info[variety.name] = {
                 'is_combo_pack': variety.is_combo_pack(),
-                'combo_pack_items_display': combo_items_display
+                'combo_pack_items_display': combo_items_display,
             }
-    
-    return render_template('ingredients.html', ingredients=ingredients_list, variety_breakdowns=variety_breakdowns, variety_info=variety_info)
+
+    return {
+        'ingredients': ingredients_list,
+        'variety_breakdowns': variety_breakdowns,
+        'variety_info': variety_info,
+        'available_years': available_years,
+        'current_month': current_month,
+        'current_year': current_year,
+        'selected_year': selected_year if selected_year is not None else current_year,
+        'selected_month': selected_month if selected_month is not None else current_month,
+        'egg_price': egg_price,
+        'sugar_price': sugar_price,
+        'brown_sugar_price': brown_sugar_price,
+        'maida_price': maida_price,
+        'breakdown': breakdown,
+    }
+
+
+def _handle_production_cost_post():
+    current_month = datetime.now().month
+    current_year = datetime.now().year
+    try:
+        selected_year = request.form.get('year', type=int, default=current_year)
+        selected_month = request.form.get('month', type=int, default=current_month)
+        egg_price_per_piece = request.form.get('egg_price', type=float, default=0)
+        sugar_price_per_kg = request.form.get('sugar_price', type=float, default=0)
+        brown_sugar_price_per_kg = request.form.get('brown_sugar_price', type=float, default=0)
+        maida_price_per_kg = request.form.get('maida_price', type=float, default=0)
+
+        breakdown = _compute_monthly_production_breakdown(
+            selected_year,
+            selected_month,
+            egg_price_per_piece,
+            sugar_price_per_kg,
+            brown_sugar_price_per_kg,
+            maida_price_per_kg,
+        )
+        return render_template(
+            'ingredients.html',
+            **_ingredients_page_data(
+                breakdown=breakdown,
+                selected_year=selected_year,
+                selected_month=selected_month,
+                egg_price=egg_price_per_piece,
+                sugar_price=sugar_price_per_kg,
+                brown_sugar_price=brown_sugar_price_per_kg,
+                maida_price=maida_price_per_kg,
+            ),
+        )
+    except Exception as e:
+        flash(f'Error calculating costs: {str(e)}', 'error')
+        return render_template(
+            'ingredients.html',
+            **_ingredients_page_data(
+                breakdown=None,
+                selected_year=request.form.get('year', type=int, default=current_year),
+                selected_month=request.form.get('month', type=int, default=current_month),
+                egg_price=request.form.get('egg_price', type=float),
+                sugar_price=request.form.get('sugar_price', type=float),
+                brown_sugar_price=request.form.get('brown_sugar_price', type=float),
+                maida_price=request.form.get('maida_price', type=float),
+            ),
+        )
+
+
+@app.route('/ingredients', methods=['GET', 'POST'])
+def ingredients():
+    """Ingredients cost management page"""
+    if request.method == 'POST' and request.form.get('production_cost_calc'):
+        return _handle_production_cost_post()
+
+    if request.method == 'POST':
+        try:
+            ingredients_list = IngredientPrice.query.all()
+            for ingredient in ingredients_list:
+                price_key = f'price_{ingredient.id}'
+                new_price = request.form.get(price_key, type=float)
+                if new_price is not None and new_price >= 0:
+                    if USE_GOOGLE_SHEETS:
+                        from google_sheets import get_gs_db
+                        gs = get_gs_db()
+                        gs.update_ingredient_price(
+                            ingredient.id,
+                            ingredient.name,
+                            Decimal(str(new_price)),
+                            ingredient.unit,
+                            ingredient.package_size,
+                            ingredient.package_unit,
+                        )
+                    else:
+                        ingredient.price = Decimal(str(new_price))
+                        ingredient.updated_at = datetime.utcnow()
+
+            if not USE_GOOGLE_SHEETS:
+                db_session.commit()
+            flash('Ingredient prices updated successfully!', 'success')
+            return redirect(url_for('ingredients'))
+        except Exception as e:
+            if not USE_GOOGLE_SHEETS:
+                db_session.rollback()
+            flash(f'Error updating ingredient prices: {str(e)}', 'error')
+
+    return render_template('ingredients.html', **_ingredients_page_data())
 
 
 @app.route('/cost-breakdown', methods=['GET', 'POST'])
 def cost_breakdown():
-    """Cost breakdown page for brownie production costs"""
-    # Get current month and year as default
-    current_month = datetime.now().month
-    current_year = datetime.now().year
-    
-    # Get all available years and months for dropdown
-    if USE_GOOGLE_SHEETS:
-        all_orders = Order.query.all()
-        years = sorted(set(order.delivery_date.year for order in all_orders if order.delivery_date), reverse=True)
-    else:
-        years = db.session.query(extract('year', Order.delivery_date).label('year')).distinct().order_by(text('year desc')).all()
-        years = [int(y[0]) for y in years if y[0]]
-    
-    available_years = years if years else [current_year]
-    
-    # Handle POST request (calculate costs)
-    if request.method == 'POST':
-        try:
-            # Get form data
-            selected_year = request.form.get('year', type=int, default=current_year)
-            selected_month = request.form.get('month', type=int, default=current_month)
-            
-            # Get ingredient prices
-            egg_price_per_piece = request.form.get('egg_price', type=float, default=0)
-            sugar_price_per_kg = request.form.get('sugar_price', type=float, default=0)
-            brown_sugar_price_per_kg = request.form.get('brown_sugar_price', type=float, default=0)
-            maida_price_per_kg = request.form.get('maida_price', type=float, default=0)
-            
-            # Get all orders for the selected month
-            if USE_GOOGLE_SHEETS:
-                all_orders = Order.query.all()
-                orders = [
-                    order for order in all_orders
-                    if order.delivery_date and order.delivery_date.year == selected_year and order.delivery_date.month == selected_month
-                ]
-            else:
-                orders = Order.query.filter(
-                    extract('year', Order.delivery_date) == selected_year,
-                    extract('month', Order.delivery_date) == selected_month
-                ).all()
-            
-            # Calculate total brownies quantity for the month
-            # Price rules:
-            # - Prices >= 15 (including 25, 28, 32, 35) → count as 1 brownie per unit
-            # - Prices < 15 → count as 0.5 brownie per unit
-            # Example: price=25, quantity=2 → 2 brownies
-            # Example: price=12.5, quantity=1 → 0.5 brownies
-            # For combo packs: count actual brownies in the combo pack
-            total_brownies = 0
-            for order in orders:
-                variety = order.variety
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                order_quantity = float(effective_quantity)
-                
-                # Check if this is a combo pack
-                if variety and variety.is_combo_pack():
-                    # For combo packs, count actual brownies in the combo pack
-                    brownies_per_combo = get_brownies_in_combo_pack(variety)
-                    brownies_for_order = brownies_per_combo * order_quantity
-                else:
-                    # For regular brownies, determine brownie count based on price
-                    order_price = float(order.price)
-                    brownies_per_unit = calculate_brownies_from_price(order_price)
-                    brownies_for_order = brownies_per_unit * order_quantity
-                
-                total_brownies += brownies_for_order
-            
-            # Calculate quantities needed (per 4 brownies)
-            # 1 egg for 4 brownies, 13g white sugar for 4 brownies, 13g brown sugar for 4 brownies, 30g maida/ragi for 4 brownies
-            batches_of_4 = total_brownies / 4.0  # How many batches of 4 brownies
-            
-            total_eggs_needed = batches_of_4
-            total_sugar_needed_kg = (batches_of_4 * 13) / 1000.0  # Convert grams to kg
-            total_brown_sugar_needed_kg = (batches_of_4 * 13) / 1000.0  # Convert grams to kg
-            total_maida_needed_kg = (batches_of_4 * 30) / 1000.0  # Convert grams to kg
-            
-            # Calculate costs
-            egg_cost = total_eggs_needed * egg_price_per_piece
-            sugar_cost = total_sugar_needed_kg * sugar_price_per_kg
-            brown_sugar_cost = total_brown_sugar_needed_kg * brown_sugar_price_per_kg
-            maida_cost = total_maida_needed_kg * maida_price_per_kg
-            
-            total_cost = egg_cost + sugar_cost + brown_sugar_cost + maida_cost
-            
-            # Prepare breakdown data
-            breakdown = {
-                'selected_year': selected_year,
-                'selected_month': selected_month,
-                'month_name': datetime(selected_year, selected_month, 1).strftime('%B %Y'),
-                'total_brownies': total_brownies,
-                'total_orders': len(orders),
-                'egg': {
-                    'quantity': total_eggs_needed,
-                    'unit': 'pieces',
-                    'price_per_unit': egg_price_per_piece,
-                    'total_cost': egg_cost
-                },
-                'sugar': {
-                    'quantity': total_sugar_needed_kg,
-                    'unit': 'kg',
-                    'price_per_unit': sugar_price_per_kg,
-                    'total_cost': sugar_cost
-                },
-                'brown_sugar': {
-                    'quantity': total_brown_sugar_needed_kg,
-                    'unit': 'kg',
-                    'price_per_unit': brown_sugar_price_per_kg,
-                    'total_cost': brown_sugar_cost
-                },
-                'maida': {
-                    'quantity': total_maida_needed_kg,
-                    'unit': 'kg',
-                    'price_per_unit': maida_price_per_kg,
-                    'total_cost': maida_cost
-                },
-                'total_cost': total_cost
-            }
-            
-            return render_template('cost_breakdown.html',
-                                 current_month=current_month,
-                                 current_year=current_year,
-                                 available_years=available_years,
-                                 selected_year=selected_year,
-                                 selected_month=selected_month,
-                                 egg_price=egg_price_per_piece,
-                                 sugar_price=sugar_price_per_kg,
-                                 brown_sugar_price=brown_sugar_price_per_kg,
-                                 maida_price=maida_price_per_kg,
-                                 breakdown=breakdown)
-        
-        except Exception as e:
-            flash(f'Error calculating costs: {str(e)}', 'error')
-    
-    # GET request - show form
-    return render_template('cost_breakdown.html',
-                         current_month=current_month,
-                         current_year=current_year,
-                         available_years=available_years,
-                         selected_year=current_year,
-                         selected_month=current_month,
-                         breakdown=None)
+    """Legacy URL: production cost calculator lives on the Ingredients page."""
+    if request.method == 'GET':
+        return redirect(url_for('ingredients') + '#production-cost')
+    return _handle_production_cost_post()
 
 
 @app.route('/reports')
 def reports():
-    """Monthly sales report page"""
-    # Get current month and year as default
-    current_month = datetime.now().month
-    current_year = datetime.now().year
-    
-    # Get all available years and months for dropdown
-    if USE_GOOGLE_SHEETS:
-        # For Google Sheets, get years from all orders
-        all_orders = Order.query.all()
-        years = sorted(set(order.delivery_date.year for order in all_orders if order.delivery_date), reverse=True)
+    """Sales & profit dashboard (date range, shop filter, charts, variety cost table)."""
+    shops = Shop.query.order_by(Shop.name).all()
+    today_iso = date.today().isoformat()
+    return render_template('reports.html', shops=shops, today_iso=today_iso)
+
+
+def _order_delivery_date(order):
+    if not order.delivery_date:
+        return None
+    d = order.delivery_date
+    return d.date() if hasattr(d, 'date') else d
+
+
+def _parse_dashboard_iso_date(s):
+    if not s or not str(s).strip():
+        return None
+    return datetime.strptime(str(s).strip(), '%Y-%m-%d').date()
+
+
+def _resolve_report_date_range(preset, date_from_str, date_to_str):
+    """Inclusive (start_date, end_date). preset: this_month, last_month, this_year, last_year, custom."""
+    today = date.today()
+    preset = (preset or 'this_month').strip().lower()
+
+    if preset == 'custom':
+        start = _parse_dashboard_iso_date(date_from_str)
+        end = _parse_dashboard_iso_date(date_to_str)
+        if not start or not end:
+            raise ValueError('Choose both start and end dates for a custom range.')
+        if start > end:
+            start, end = end, start
+        return start, end
+
+    if preset == 'this_month':
+        y, m = today.year, today.month
+        start = date(y, m, 1)
+        end = date(y, m, calendar.monthrange(y, m)[1])
+        return start, end
+
+    if preset == 'last_month':
+        if today.month == 1:
+            y, m = today.year - 1, 12
+        else:
+            y, m = today.year, today.month - 1
+        start = date(y, m, 1)
+        end = date(y, m, calendar.monthrange(y, m)[1])
+        return start, end
+
+    if preset == 'this_year':
+        return date(today.year, 1, 1), date(today.year, 12, 31)
+
+    if preset == 'last_year':
+        y = today.year - 1
+        return date(y, 1, 1), date(y, 12, 31)
+
+    y, m = today.year, today.month
+    start = date(y, m, 1)
+    end = date(y, m, calendar.monthrange(y, m)[1])
+    return start, end
+
+
+def _filter_orders_by_range_and_shop(all_orders, start_d, end_d, shop_id):
+    out = []
+    for o in all_orders:
+        od = _order_delivery_date(o)
+        if od is None or od < start_d or od > end_d:
+            continue
+        if shop_id and getattr(o, 'shop_id', None) != shop_id:
+            continue
+        out.append(o)
+    return out
+
+
+def _build_sales_profit_trends(orders, start_d, end_d, trend_mode='auto'):
+    """Time buckets in [start_d, end_d], capped at today. trend_mode: auto|daily|weekly|monthly|yearly."""
+    trend_mode = (trend_mode or 'auto').strip().lower()
+    if trend_mode not in ('auto', 'daily', 'weekly', 'monthly', 'yearly'):
+        trend_mode = 'auto'
+
+    today = date.today()
+    trend_end = min(end_d, today)
+    span_days = (end_d - start_d).days + 1
+
+    if trend_mode == 'auto':
+        if span_days <= 45:
+            granularity = 'daily'
+        elif span_days <= 240:
+            granularity = 'weekly'
+        else:
+            granularity = 'monthly'
     else:
-        years = db.session.query(extract('year', Order.delivery_date).label('year')).distinct().order_by(text('year desc')).all()
-        years = [int(y[0]) for y in years if y[0]]
-    
-    return render_template('reports.html', 
-                         current_month=current_month, 
-                         current_year=current_year,
-                         available_years=years if years else [current_year])
+        granularity = trend_mode
+
+    if trend_end < start_d:
+        return {'labels': [], 'sales': [], 'profit': [], 'granularity': granularity}
+
+    by_bucket = defaultdict(list)
+    for o in orders:
+        od = _order_delivery_date(o)
+        if od is None or od < start_d or od > trend_end:
+            continue
+        if granularity == 'daily':
+            by_bucket[od].append(o)
+        elif granularity == 'weekly':
+            y, w, _ = od.isocalendar()
+            by_bucket[(y, w)].append(o)
+        elif granularity == 'monthly':
+            by_bucket[(od.year, od.month)].append(o)
+        else:
+            by_bucket[od.year].append(o)
+
+    if granularity == 'daily':
+        keys = []
+        d = start_d
+        while d <= trend_end:
+            keys.append(d)
+            d += timedelta(days=1)
+        labels = [k.strftime('%d %b') for k in keys]
+    elif granularity == 'weekly':
+        keys_set = set()
+        cur = start_d
+        while cur <= trend_end:
+            y, w, _ = cur.isocalendar()
+            keys_set.add((y, w))
+            cur += timedelta(days=1)
+        keys = sorted(keys_set, key=lambda x: (x[0], x[1]))
+        labels = [f'W{k[1]} {k[0]}' for k in keys]
+    elif granularity == 'monthly':
+        keys = []
+        end_cap = (trend_end.year, trend_end.month)
+        y, m = start_d.year, start_d.month
+        while (y, m) <= end_cap:
+            keys.append((y, m))
+            m += 1
+            if m > 12:
+                m, y = 1, y + 1
+        labels = [datetime(y, m, 1).strftime('%b %Y') for y, m in keys]
+    else:
+        keys = list(range(start_d.year, trend_end.year + 1))
+        labels = [str(y) for y in keys]
+
+    sales_vals = []
+    profit_vals = []
+    for k in keys:
+        bl = by_bucket.get(k, [])
+        ts = sum(order_total_receivable(o) for o in bl)
+        margin, _tc = calculate_total_cost_and_profit(bl)
+        sales_vals.append(round(ts, 2))
+        profit_vals.append(round(margin, 2))
+
+    return {
+        'labels': labels,
+        'sales': sales_vals,
+        'profit': profit_vals,
+        'granularity': granularity,
+    }
+
+
+def _build_report_dict_from_orders(orders):
+    """Aggregate report payload: revenue = goods (after returns) + parcel/courier per order."""
+    total_sales = sum(order_total_receivable(o) for o in orders)
+    total_paid = sum(float(order.paid_amount) if order.paid_amount else 0 for order in orders)
+    total_pending = total_sales - total_paid
+    margin, total_cost = calculate_total_cost_and_profit(orders)
+    profit_percentage = (margin / total_sales * 100) if total_sales > 0 else 0
+
+    shop_dict = {}
+    for order in orders:
+        shop = order.shop
+        shop_name = shop.name if shop else 'Unknown'
+        if shop_name not in shop_dict:
+            shop_dict[shop_name] = {'total': 0, 'paid': 0}
+        shop_dict[shop_name]['total'] += order_total_receivable(order)
+        shop_dict[shop_name]['paid'] += float(order.paid_amount) if order.paid_amount else 0
+
+    shop_totals = sorted(
+        [(name, data['total'], data['paid']) for name, data in shop_dict.items()],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    shop_data = {
+        'labels': [s[0] for s in shop_totals],
+        'values': [float(s[1]) for s in shop_totals],
+        'pending': [float(s[1]) - float(s[2]) for s in shop_totals],
+    }
+
+    variety_dict = {}
+    for order in orders:
+        variety = order.variety
+        variety_name = variety.name if variety else 'Unknown'
+        if variety_name not in variety_dict:
+            variety_dict[variety_name] = 0
+        variety_dict[variety_name] += order_total_receivable(order)
+
+    variety_totals = sorted(variety_dict.items(), key=lambda x: x[1], reverse=True)
+    variety_data = {
+        'labels': [v[0] for v in variety_totals],
+        'values': [float(v[1]) for v in variety_totals],
+    }
+
+    variety_cost_breakdown = aggregate_variety_cost_breakdown_from_orders(orders)
+    variety_breakdown = format_variety_breakdown_rows(variety_cost_breakdown)
+
+    total_orders = len(orders)
+    avg_order_value = total_sales / total_orders if total_orders > 0 else 0
+
+    return {
+        'total_sales': round(total_sales, 2),
+        'total_paid': round(total_paid, 2),
+        'total_pending': round(total_pending, 2),
+        'margin': round(margin, 2),
+        'profit_percentage': round(profit_percentage, 2),
+        'total_cost': round(total_cost, 2),
+        'shop_data': shop_data,
+        'variety_data': variety_data,
+        'variety_breakdown': variety_breakdown,
+        'total_orders': total_orders,
+        'avg_order_value': round(avg_order_value, 2),
+    }
+
+
+@app.route('/api/reports/dashboard')
+def api_reports_dashboard():
+    """Single endpoint: presets or custom dates, optional shop; pies, summary, variety table, trends."""
+    try:
+        preset = request.args.get('preset', 'this_month')
+        date_from = request.args.get('from')
+        date_to = request.args.get('to')
+        shop_id = request.args.get('shop_id', type=int)
+        trend_bucket = request.args.get('trend_bucket', 'auto')
+
+        start_d, end_d = _resolve_report_date_range(preset, date_from, date_to)
+        all_orders = Order.query.all()
+        orders = _filter_orders_by_range_and_shop(all_orders, start_d, end_d, shop_id)
+
+        payload = _build_report_dict_from_orders(orders)
+        trends = _build_sales_profit_trends(orders, start_d, end_d, trend_bucket)
+        payload['period'] = {
+            'start': start_d.isoformat(),
+            'end': end_d.isoformat(),
+            'label': f"{start_d.strftime('%d %b %Y')} – {end_d.strftime('%d %b %Y')}",
+            'preset': preset,
+        }
+        payload['trend_labels'] = trends['labels']
+        payload['trend_sales'] = trends['sales']
+        payload['trend_profit'] = trends['profit']
+        payload['trend_granularity'] = trends['granularity']
+        payload['trend_bucket_request'] = (trend_bucket or 'auto').strip().lower()
+        return jsonify(payload)
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/reports/overall')
 def api_overall_report():
     """JSON API endpoint for overall/all-time report data"""
     try:
-        # Get all orders
         orders = Order.query.all()
-        
-        # Calculate totals using effective quantity (with Combo Pack 1 price correction)
-        total_sales = sum(float(order.price * max(0, (order.quantity or 0) - (order.returns or 0))) for order in orders)
-        total_paid = sum(float(order.paid_amount) if order.paid_amount else 0 for order in orders)
-        total_pending = total_sales - total_paid
-        margin, total_cost = calculate_total_cost_and_profit(orders)
-        profit_percentage = (margin / total_sales * 100) if total_sales > 0 else 0
-        
-        # Shop-wise breakdown with pending amounts (sorted by total descending)
-        if USE_GOOGLE_SHEETS:
-            # Group and aggregate in Python for Google Sheets
-            shop_dict = {}
-            for order in orders:
-                shop = order.shop
-                shop_name = shop.name if shop else 'Unknown'
-                if shop_name not in shop_dict:
-                    shop_dict[shop_name] = {'total': 0, 'paid': 0}
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                shop_dict[shop_name]['total'] += float(order.price * effective_quantity)
-                shop_dict[shop_name]['paid'] += float(order.paid_amount) if order.paid_amount else 0
-            
-            shop_totals = sorted(
-                [(name, data['total'], data['paid']) for name, data in shop_dict.items()],
-                key=lambda x: x[1], reverse=True
-            )
-        else:
-            shop_totals = db.session.query(
-                Shop.name,
-                func.sum(Order.price * Order.quantity).label('total'),
-                func.sum(func.coalesce(Order.paid_amount, 0)).label('paid')
-            ).join(Order).group_by(Shop.id, Shop.name).order_by(text('total desc')).all()
-        
-        shop_data = {
-            'labels': [s[0] for s in shop_totals],
-            'values': [float(s[1]) for s in shop_totals],
-            'pending': [float(s[1]) - float(s[2]) for s in shop_totals]
-        }
-        
-        # Variety-wise breakdown (sorted by total descending)
-        if USE_GOOGLE_SHEETS:
-            # Group and aggregate in Python for Google Sheets
-            variety_dict = {}
-            for order in orders:
-                variety = order.variety
-                variety_name = variety.name if variety else 'Unknown'
-                if variety_name not in variety_dict:
-                    variety_dict[variety_name] = 0
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                variety_dict[variety_name] += float(order.price * effective_quantity)
-            
-            variety_totals = sorted(
-                [(name, total) for name, total in variety_dict.items()],
-                key=lambda x: x[1], reverse=True
-            )
-        else:
-            variety_totals = db.session.query(
-                Variety.name,
-                func.sum(Order.price * Order.quantity).label('total')
-            ).join(Order).group_by(Variety.id, Variety.name).order_by(text('total desc')).all()
-        
-        variety_data = {
-            'labels': [v[0] for v in variety_totals],
-            'values': [float(v[1]) for v in variety_totals]
-        }
-        
-        # Variety-wise cost breakdown
-        variety_cost_breakdown = {}
-        for order in orders:
-            variety = order.variety
-            variety_name = variety.name if variety else 'Unknown'
-            
-            if variety_name not in variety_cost_breakdown:
-                variety_cost_breakdown[variety_name] = {
-                    'sales': 0,
-                    'cost': 0,
-                    'quantity': 0,
-                    'brownies_count': 0
-                }
-            
-            # Calculate cost per brownie for this variety using get_cost_breakdown (same as ingredients page)
-            breakdown = get_cost_breakdown(variety_name)
-            cost_per_brownie = breakdown.get('cost_per_brownie') if breakdown else None
-            
-            if cost_per_brownie is not None:
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                order_quantity = float(effective_quantity)
-                
-                # For combo packs, cost_per_brownie is actually cost per combo pack
-                if variety and variety.is_combo_pack():
-                    # For Combo Pack 1, cost_per_brownie is already the total cost of one combo pack
-                    # So we multiply directly by effective quantity (number of combo packs)
-                    order_cost = cost_per_brownie * effective_quantity
-                    # For sales, always use actual order.price from database (not calculated price)
-                    order_sales = float(order.price * effective_quantity)
-                    # For combo pack, count actual brownies in the combo pack
-                    brownies_per_combo = get_brownies_in_combo_pack(variety)
-                    brownies_count = brownies_per_combo * effective_quantity
-                else:
-                    # For regular brownies, determine brownie count based on price
-                    order_price = float(order.price)
-                    brownies_per_unit = calculate_brownies_from_price(order_price)
-                    brownies_count = brownies_per_unit * order_quantity
-                    order_cost = brownies_count * cost_per_brownie
-                    order_sales = float(order.price * effective_quantity)
-                
-                variety_cost_breakdown[variety_name]['sales'] += order_sales
-                variety_cost_breakdown[variety_name]['cost'] += order_cost
-                variety_cost_breakdown[variety_name]['quantity'] += order_quantity
-                variety_cost_breakdown[variety_name]['brownies_count'] += brownies_count
-        
-        # Format variety breakdown with costs
-        variety_breakdown = []
-        for variety_name, data in variety_cost_breakdown.items():
-            profit = data['sales'] - data['cost']
-            profit_pct = (profit / data['sales'] * 100) if data['sales'] > 0 else 0
-            # For combo packs, show cost per combo pack, not per brownie
-            variety_obj = Variety.query.filter_by(name=variety_name).first()
-            if variety_obj and variety_obj.is_combo_pack():
-                cost_per_unit = round(data['cost'] / data['quantity'], 2) if data['quantity'] > 0 else 0
-            else:
-                cost_per_unit = round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
-            variety_breakdown.append({
-                'name': variety_name,
-                'sales': round(data['sales'], 2),
-                'cost': round(data['cost'], 2),
-                'profit': round(profit, 2),
-                'profit_percentage': round(profit_pct, 2),
-                'quantity': data['quantity'],
-                'brownies_count': round(data['brownies_count'], 2),
-                'cost_per_brownie': cost_per_unit
-            })
-        
-        # Sort by sales descending
-        variety_breakdown.sort(key=lambda x: x['sales'], reverse=True)
-        
-        # Summary statistics
-        total_orders = len(orders)
-        avg_order_value = total_sales / total_orders if total_orders > 0 else 0
-        
-        return jsonify({
-            'total_sales': round(total_sales, 2),
-            'total_paid': round(total_paid, 2),
-            'total_pending': round(total_pending, 2),
-            'margin': round(margin, 2),
-            'profit_percentage': round(profit_percentage, 2),
-            'total_cost': round(total_cost, 2),
-            'shop_data': shop_data,
-            'variety_data': variety_data,
-            'variety_breakdown': variety_breakdown,
-            'total_orders': total_orders,
-            'avg_order_value': round(avg_order_value, 2)
-        })
-    
+        return jsonify(_build_report_dict_from_orders(orders))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1538,8 +1951,7 @@ def api_profit_by_month():
                 
             month_key = order.delivery_date.strftime('%Y-%m')
             month_label = order.delivery_date.strftime('%B %Y')
-            
-            effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
+
             if month_key not in monthly_data:
                 monthly_data[month_key] = {
                     'label': month_label,
@@ -1549,7 +1961,7 @@ def api_profit_by_month():
                 }
             
             monthly_data[month_key]['orders'].append(order)
-            monthly_data[month_key]['sales'] += float(order.price * effective_quantity)
+            monthly_data[month_key]['sales'] += order_total_receivable(order)
         
         # Calculate profit for each month
         profit_by_month = []
@@ -1580,177 +1992,85 @@ def api_profit_by_month():
 def api_monthly_report(year, month):
     """JSON API endpoint for monthly report data"""
     try:
-        # Get all orders for the month
         if USE_GOOGLE_SHEETS:
             all_orders = Order.query.all()
             orders = [
-                order for order in all_orders
-                if order.delivery_date and order.delivery_date.year == year and order.delivery_date.month == month
+                order
+                for order in all_orders
+                if order.delivery_date
+                and order.delivery_date.year == year
+                and order.delivery_date.month == month
             ]
         else:
             orders = Order.query.filter(
                 extract('year', Order.delivery_date) == year,
-                extract('month', Order.delivery_date) == month
+                extract('month', Order.delivery_date) == month,
             ).all()
-        
-        # Calculate totals using effective quantity (with Combo Pack 1 price correction)
-        total_sales = sum(float(order.price * max(0, (order.quantity or 0) - (order.returns or 0))) for order in orders)
-        total_paid = sum(float(order.paid_amount) if order.paid_amount else 0 for order in orders)
-        total_pending = total_sales - total_paid
-        margin, total_cost = calculate_total_cost_and_profit(orders)
-        profit_percentage = (margin / total_sales * 100) if total_sales > 0 else 0
-        
-        # Shop-wise breakdown with pending amounts (sorted by total descending)
+
+        return jsonify(_build_report_dict_from_orders(orders))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/reports/yearly/<int:year>')
+def api_yearly_report(year):
+    """JSON API: all orders in the given calendar year."""
+    try:
         if USE_GOOGLE_SHEETS:
-            # Group and aggregate in Python for Google Sheets (already filtered by month/year above)
-            shop_dict = {}
-            for order in orders:
-                shop = order.shop
-                shop_name = shop.name if shop else 'Unknown'
-                if shop_name not in shop_dict:
-                    shop_dict[shop_name] = {'total': 0, 'paid': 0}
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                shop_dict[shop_name]['total'] += float(order.price * effective_quantity)
-                shop_dict[shop_name]['paid'] += float(order.paid_amount) if order.paid_amount else 0
-            
-            shop_totals = sorted(
-                [(name, data['total'], data['paid']) for name, data in shop_dict.items()],
-                key=lambda x: x[1], reverse=True
-            )
+            all_orders = Order.query.all()
+            orders = [
+                order
+                for order in all_orders
+                if order.delivery_date and order.delivery_date.year == year
+            ]
         else:
-            shop_totals = db.session.query(
-                Shop.name,
-                func.sum(Order.price * Order.quantity).label('total'),
-                func.sum(func.coalesce(Order.paid_amount, 0)).label('paid')
-            ).join(Order).filter(
-                extract('year', Order.delivery_date) == year,
-                extract('month', Order.delivery_date) == month
-            ).group_by(Shop.id, Shop.name).order_by(text('total desc')).all()
-        
-        shop_data = {
-            'labels': [s[0] for s in shop_totals],
-            'values': [float(s[1]) for s in shop_totals],
-            'pending': [float(s[1]) - float(s[2]) for s in shop_totals]
-        }
-        
-        # Variety-wise breakdown (sorted by total descending)
-        if USE_GOOGLE_SHEETS:
-            # Group and aggregate in Python for Google Sheets (already filtered by month/year above)
-            variety_dict = {}
-            for order in orders:
-                variety = order.variety
-                variety_name = variety.name if variety else 'Unknown'
-                if variety_name not in variety_dict:
-                    variety_dict[variety_name] = 0
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                variety_dict[variety_name] += float(order.price * effective_quantity)
-            
-            variety_totals = sorted(
-                [(name, total) for name, total in variety_dict.items()],
-                key=lambda x: x[1], reverse=True
-            )
-        else:
-            variety_totals = db.session.query(
-                Variety.name,
-                func.sum(Order.price * Order.quantity).label('total')
-            ).join(Order).filter(
-                extract('year', Order.delivery_date) == year,
-                extract('month', Order.delivery_date) == month
-            ).group_by(Variety.id, Variety.name).order_by(text('total desc')).all()
-        
-        variety_data = {
-            'labels': [v[0] for v in variety_totals],
-            'values': [float(v[1]) for v in variety_totals]
-        }
-        
-        # Variety-wise cost breakdown
-        variety_cost_breakdown = {}
-        for order in orders:
-            variety = order.variety
-            variety_name = variety.name if variety else 'Unknown'
-            
-            if variety_name not in variety_cost_breakdown:
-                variety_cost_breakdown[variety_name] = {
-                    'sales': 0,
-                    'cost': 0,
-                    'quantity': 0,
-                    'brownies_count': 0
-                }
-            
-            # Calculate cost per brownie for this variety using get_cost_breakdown (same as ingredients page)
-            breakdown = get_cost_breakdown(variety_name)
-            cost_per_brownie = breakdown.get('cost_per_brownie') if breakdown else None
-            
-            if cost_per_brownie is not None:
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                order_quantity = float(effective_quantity)
-                
-                # For combo packs, cost_per_brownie is actually cost per combo pack
-                if variety and variety.is_combo_pack():
-                    # For combo packs, cost_per_brownie is already the total cost of one combo pack
-                    # So we multiply directly by effective quantity (number of combo packs)
-                    order_cost = cost_per_brownie * effective_quantity
-                    # For sales, always use actual order.price from database (sum of all order prices)
-                    order_sales = float(order.price * effective_quantity)
-                    # For combo pack, count actual brownies in the combo pack
-                    brownies_per_combo = get_brownies_in_combo_pack(variety)
-                    brownies_count = brownies_per_combo * effective_quantity
-                else:
-                    # For regular brownies, determine brownie count based on price
-                    order_price = float(order.price)
-                    brownies_per_unit = calculate_brownies_from_price(order_price)
-                    brownies_count = brownies_per_unit * order_quantity
-                    order_cost = brownies_count * cost_per_brownie
-                    order_sales = float(order.price * effective_quantity)
-                
-                variety_cost_breakdown[variety_name]['sales'] += order_sales
-                variety_cost_breakdown[variety_name]['cost'] += order_cost
-                variety_cost_breakdown[variety_name]['quantity'] += order_quantity
-                variety_cost_breakdown[variety_name]['brownies_count'] += brownies_count
-        
-        # Format variety breakdown with costs
-        variety_breakdown = []
-        for variety_name, data in variety_cost_breakdown.items():
-            profit = data['sales'] - data['cost']
-            profit_pct = (profit / data['sales'] * 100) if data['sales'] > 0 else 0
-            # For combo packs, show cost per combo pack, not per brownie
-            variety_obj = Variety.query.filter_by(name=variety_name).first()
-            if variety_obj and variety_obj.is_combo_pack():
-                cost_per_unit = round(data['cost'] / data['quantity'], 2) if data['quantity'] > 0 else 0
-            else:
-                cost_per_unit = round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
-            variety_breakdown.append({
-                'name': variety_name,
-                'sales': round(data['sales'], 2),
-                'cost': round(data['cost'], 2),
-                'profit': round(profit, 2),
-                'profit_percentage': round(profit_pct, 2),
-                'quantity': data['quantity'],
-                'brownies_count': round(data['brownies_count'], 2),
-                'cost_per_brownie': cost_per_unit
-            })
-        
-        # Sort by sales descending
-        variety_breakdown.sort(key=lambda x: x['sales'], reverse=True)
-        
-        # Summary statistics
-        total_orders = len(orders)
-        avg_order_value = total_sales / total_orders if total_orders > 0 else 0
-        
+            orders = Order.query.filter(extract('year', Order.delivery_date) == year).all()
+
+        return jsonify(_build_report_dict_from_orders(orders))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/reports/monthly-trend')
+def api_monthly_trend():
+    """Monthly sales + profit for one year; optional shop_id filter."""
+    try:
+        year = request.args.get('year', type=int) or datetime.now().year
+        shop_id = request.args.get('shop_id', type=int)
+
+        all_orders = Order.query.all()
+        filtered = []
+        for order in all_orders:
+            if not order.delivery_date:
+                continue
+            if order.delivery_date.year != year:
+                continue
+            if shop_id and order.shop_id != shop_id:
+                continue
+            filtered.append(order)
+
+        buckets = {m: [] for m in range(1, 13)}
+        for order in filtered:
+            buckets[order.delivery_date.month].append(order)
+
+        labels = []
+        sales_series = []
+        profit_series = []
+        for m in range(1, 13):
+            labels.append(datetime(year, m, 1).strftime('%b %Y'))
+            month_orders = buckets[m]
+            ts = sum(order_total_receivable(o) for o in month_orders)
+            margin, _tc = calculate_total_cost_and_profit(month_orders)
+            sales_series.append(round(ts, 2))
+            profit_series.append(round(margin, 2))
+
         return jsonify({
-            'total_sales': round(total_sales, 2),
-            'total_paid': round(total_paid, 2),
-            'total_pending': round(total_pending, 2),
-            'margin': round(margin, 2),
-            'profit_percentage': round(profit_percentage, 2),
-            'total_cost': round(total_cost, 2),
-            'shop_data': shop_data,
-            'variety_data': variety_data,
-            'variety_breakdown': variety_breakdown,
-            'total_orders': total_orders,
-            'avg_order_value': round(avg_order_value, 2)
+            'year': year,
+            'shop_id': shop_id,
+            'labels': labels,
+            'sales': sales_series,
+            'profit': profit_series,
         })
-    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1767,11 +2087,10 @@ def shop_bill(id):
     total_pending = 0
     
     for order in all_orders:
-        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-        order_total = float(order.price * effective_quantity)
+        order_total = order_total_receivable(order)
         paid_amt = float(order.paid_amount) if order.paid_amount else 0
         pending_amt = order_total - paid_amt
-        
+
         if pending_amt > 0:
             unpaid_orders.append({
                 'order': order,
@@ -1846,11 +2165,10 @@ def shop_invoice(id):
     total_pending = 0
     
     for order in filtered_orders:
-        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-        order_total = float(order.price * effective_quantity)
+        order_total = order_total_receivable(order)
         paid_amt = float(order.paid_amount) if order.paid_amount else 0
         pending_amt = order_total - paid_amt
-        
+
         invoice_orders.append({
             'order': order,
             'total': order_total,
@@ -1934,7 +2252,7 @@ def edit_order(id):
                     Decimal(str(courier_price)),
                     returns
                 )
-                total = float(Decimal(str(price)) * effective_quantity)
+                total = float(Decimal(str(price)) * effective_quantity) + float(courier_price or 0)
             else:
                 # For SQLite, update the object and commit
                 order.variety_id = variety_id
@@ -1947,8 +2265,8 @@ def edit_order(id):
                 order.paid_amount = Decimal(str(paid_amount))
                 order.courier_price = Decimal(str(courier_price))
                 db_session.commit()
-                total = float(order.price * effective_quantity)
-            
+                total = order_total_receivable(order)
+
             flash(f'Order updated successfully! Total: ₹{total:.2f}', 'success')
             return redirect(url_for('orders'))
         
@@ -1971,11 +2289,8 @@ def mark_order_paid(id):
         order = Order.query.get_or_404(id)
         
         # Calculate effective quantity (quantity - returns)
-        effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-        
-        # Calculate total amount based on effective quantity
-        total_amount = float(order.price * effective_quantity)
-        
+        total_amount = order_total_receivable(order)
+
         # Update payment status to paid
         if USE_GOOGLE_SHEETS:
             # For Google Sheets, update via API
@@ -2033,16 +2348,14 @@ def mark_all_orders_paid(shop_id):
         total_amount = 0
         
         for order in all_orders:
-            # Calculate effective quantity (quantity - returns)
-            effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-            order_total = float(order.price * effective_quantity)
+            order_total = order_total_receivable(order)
             paid_amt = float(order.paid_amount) if order.paid_amount else 0
             pending_amt = order_total - paid_amt
-            
+
             if pending_amt > 0:  # Only mark unpaid or partially paid orders
                 unpaid_orders.append(order)
                 total_amount += order_total
-        
+
         if not unpaid_orders:
             flash(f'All orders for {shop.name} are already paid!', 'info')
             return redirect(url_for('orders', shop_id=shop_id))
@@ -2052,8 +2365,7 @@ def mark_all_orders_paid(shop_id):
             from google_sheets import get_gs_db
             gs = get_gs_db()
             for order in unpaid_orders:
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                order_total = float(order.price * effective_quantity)
+                order_total = order_total_receivable(order)
                 gs.update_order(
                     order.id,
                     order.variety_id,
@@ -2068,12 +2380,11 @@ def mark_all_orders_paid(shop_id):
                 )
         else:
             for order in unpaid_orders:
-                effective_quantity = max(0, (order.quantity or 0) - (order.returns or 0))
-                order_total = float(order.price * effective_quantity)
+                order_total = order_total_receivable(order)
                 order.payment_status = 'paid'
                 order.paid_amount = Decimal(str(order_total))
             db_session.commit()
-        
+
         flash(f'Marked {len(unpaid_orders)} order(s) as paid for {shop.name}! Total: ₹{total_amount:.2f}', 'success')
         return redirect(url_for('orders', shop_id=shop_id))
     
