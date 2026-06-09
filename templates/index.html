@@ -67,6 +67,16 @@
                     </div>
 
                     <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" id="is_sample" name="is_sample" value="true">
+                            <label class="form-check-label" for="is_sample">
+                                <i class="fas fa-gift me-2"></i>This is a sample (counted in cost, sold at ₹0)
+                            </label>
+                        </div>
+                        <small class="form-text text-muted">When enabled, payment and courier are ignored and the order earns ₹0 revenue.</small>
+                    </div>
+
+                    <div class="mb-3" id="payment_status_group">
                         <label for="payment_status" class="form-label">
                             <i class="fas fa-money-bill-wave me-2"></i>Payment Status <span class="text-danger">*</span>
                         </label>
@@ -77,7 +87,7 @@
                         </select>
                     </div>
                     
-                    <div class="mb-3">
+                    <div class="mb-3" id="paid_amount_group">
                         <label for="paid_amount" class="form-label">
                             <i class="fas fa-rupee-sign me-2"></i>Paid Amount (₹)
                         </label>
@@ -85,7 +95,7 @@
                         <small class="form-text text-muted">Required for partial payment</small>
                     </div>
 
-                    <div class="mb-3">
+                    <div class="mb-3" id="courier_price_group">
                         <label for="courier_price" class="form-label">
                             <i class="fas fa-truck me-2"></i>Courier Price (₹)
                         </label>
@@ -136,6 +146,26 @@
                 if (returns < 0) {
                     returnsInput.value = 0;
                 }
+            });
+        }
+
+        // Toggle payment-related fields when "sample" is selected
+        const sampleToggle = document.getElementById('is_sample');
+        const paymentGroups = [
+            document.getElementById('payment_status_group'),
+            document.getElementById('paid_amount_group'),
+            document.getElementById('courier_price_group')
+        ];
+        const paymentStatusSelect = document.getElementById('payment_status');
+        const paidAmountInput = document.getElementById('paid_amount');
+        const courierInput = document.getElementById('courier_price');
+        if (sampleToggle) {
+            sampleToggle.addEventListener('change', function() {
+                const sample = sampleToggle.checked;
+                paymentGroups.forEach(g => { if (g) g.style.display = sample ? 'none' : 'block'; });
+                if (paymentStatusSelect) paymentStatusSelect.disabled = sample;
+                if (paidAmountInput) paidAmountInput.disabled = sample;
+                if (courierInput) courierInput.disabled = sample;
             });
         }
     });

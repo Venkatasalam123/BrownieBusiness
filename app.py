@@ -201,6 +201,61 @@ def _sync_combo_pack_default_prices_from_config():
         db_session.commit()
 
 
+def _ensure_cookie_varieties():
+    """Create the four cookie varieties if they don't already exist.
+
+    Default (selling) prices are placeholders the user can edit on the Varieties page;
+    the cookie COST is computed separately by cookie_cost_breakdown()."""
+    cookie_defaults = [
+        ('Choco Chip Cookie - 1pc', 15),
+        ('Choco Chip Cookie - 1 Box (5Pcs)', 75),
+        ('Red Velvet Cookie - 1pc', 20),
+        ('Red Velvet Cookie - 1 Box (5Pcs)', 100),
+    ]
+    existing_names = {(v.name or '').strip().lower() for v in Variety.query.all()}
+    for name, price in cookie_defaults:
+        if name.strip().lower() in existing_names:
+            continue
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.add_variety(name, Decimal(str(price)))
+        else:
+            db_session.add(Variety(name=name, default_price=Decimal(str(price))))
+        print(f"✓ Created cookie variety '{name}' (default price ₹{price})")
+    if not USE_GOOGLE_SHEETS:
+        db_session.commit()
+
+
+def _ensure_chocolate_ingredients():
+    """Ensure Dark/White Chocolate ingredient rows exist (used by cookie recipes)."""
+    if IngredientPrice is None:
+        return
+    choc_defaults = [
+        ('Dark Chocolate', 165),
+        ('White Chocolate', 200),
+    ]
+    for name, price in choc_defaults:
+        existing = IngredientPrice.query.filter_by(name=name).first()
+        if existing:
+            continue
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.add_ingredient_price(name, Decimal(str(price)), '500g', Decimal('500'), 'g')
+        else:
+            db_session.add(IngredientPrice(
+                name=name,
+                price=Decimal(str(price)),
+                unit='500g',
+                package_size=Decimal('500'),
+                package_unit='g'
+            ))
+        print(f"✓ Created ingredient '{name}' (₹{price}/500g)")
+    if not USE_GOOGLE_SHEETS:
+        db_session.commit()
+
+
 if not USE_GOOGLE_SHEETS:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///brownie_sales.db'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -212,6 +267,8 @@ if not USE_GOOGLE_SHEETS:
         _initialize_default_ingredient_prices()
         # Update Miscellaneous cost if needed
         _update_miscellaneous_cost()
+        _ensure_chocolate_ingredients()
+        _ensure_cookie_varieties()
         _apply_standard_combo_pack_contents()
         _sync_combo_pack_default_prices_from_config()
 else:
@@ -221,6 +278,8 @@ else:
         db.create_all()
         # Update Miscellaneous cost if needed
         _update_miscellaneous_cost()
+        _ensure_chocolate_ingredients()
+        _ensure_cookie_varieties()
         _apply_standard_combo_pack_contents()
         _sync_combo_pack_default_prices_from_config()
 
@@ -245,6 +304,8 @@ def _initialize_default_ingredient_prices():
         {'name': 'Pista Nuts', 'price': 445, 'unit': '250g', 'package_size': 250, 'package_unit': 'g'},
         {'name': 'Milk Compound', 'price': 190, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
         {'name': 'White Compound', 'price': 205, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'Dark Chocolate', 'price': 165, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
+        {'name': 'White Chocolate', 'price': 200, 'unit': '500g', 'package_size': 500, 'package_unit': 'g'},
         {'name': 'Oven Charges', 'price': 20, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
         {'name': 'Miscellaneous', 'price': 15, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
         {'name': 'Packing', 'price': 28.8, 'unit': '16 brownies', 'package_size': 16, 'package_unit': 'pc'},
@@ -324,10 +385,146 @@ def calculate_cost_per_brownie(variety_name):
     return None
 
 
+# Cookie recipe constants (Choco Chip / Red Velvet cookies)
+COOKIE_BATCH_YIELD = 13      # cookies produced per batch
+COOKIE_BOX_COUNT = 5         # cookies per box
+COOKIE_BOX_PACKING = 7.0     # ₹ packing per box
+
+
+def is_cookie(variety_name):
+    """Cookies use a dedicated per-unit recipe instead of the brownie price-derived model."""
+    return 'cookie' in (variety_name or '').strip().lower()
+
+
+def _is_cookie_box(variety_name):
+    """A cookie box is a 5-piece pack (name contains 'box')."""
+    return 'box' in (variety_name or '').strip().lower()
+
+
+def cookie_cost_breakdown(variety_name):
+    """Per-unit cookie cost. A batch yields 13 cookies.
+
+    Choco Chip (per batch of 13): butter 113g, white sugar 90g, brown sugar 90g,
+    maida 180g, 1 egg, ₹1 vanilla, ₹2 misc, dark chocolate 40g.
+    Red Velvet (per batch): base (no dark chocolate) + ₹25 cocoa + ₹2 red velvet essence
+    + ₹2 extra misc + white chocolate 40g.
+    Box (5pc): single cookie cost × 5 + ₹7 packing.
+
+    Returns a breakdown dict whose 'cost_per_brownie' is the per-unit cost
+    (per single cookie, or per box for box varieties)."""
+    is_red_velvet = 'red velvet' in (variety_name or '').strip().lower()
+
+    breakdown = {
+        'variety': variety_name,
+        'ingredients': [],
+        'total_cost_16_brownies': 0,
+        'cost_per_brownie': 0,
+    }
+
+    def add_ing(name, qty_label, package_price, package_size, price_per_unit, cost):
+        breakdown['ingredients'].append({
+            'name': name,
+            'quantity': qty_label,
+            'package_price': package_price,
+            'package_size': package_size,
+            'price_per_unit': price_per_unit,
+            'cost': cost,
+        })
+
+    batch_label = f'batch of {COOKIE_BATCH_YIELD}'
+    batch_total = 0.0
+
+    # Weight-based ingredients sourced from ingredient prices
+    weight_items = [
+        ('Butter', 113),
+        ('White Sugar', 90),
+        ('Brown Sugar', 90),
+        ('Maida/Ragi', 180),
+    ]
+    for ing_name, grams in weight_items:
+        ing = get_ingredient_price(ing_name)
+        if ing:
+            ppg = ing.get_price_per_gram()
+            if ppg:
+                cost = grams * ppg
+                batch_total += cost
+                add_ing(ing_name, f'{grams}g ({batch_label})', float(ing.price), f'{ing.unit}', ppg, cost)
+
+    # Egg (count-based)
+    egg = get_ingredient_price('Egg')
+    if egg:
+        ppc = egg.get_price_per_piece()
+        if ppc:
+            cost = 1 * ppc
+            batch_total += cost
+            add_ing('Egg', f'1 piece ({batch_label})', float(egg.price), f'{egg.unit}', ppc, cost)
+
+    # Flat per-batch costs
+    vanilla_cost = 1.0
+    batch_total += vanilla_cost
+    add_ing('Vanilla Essence', f'flat ({batch_label})', vanilla_cost, '1 batch', vanilla_cost, vanilla_cost)
+
+    misc_cost = 2.0
+    batch_total += misc_cost
+    add_ing('Miscellaneous', f'flat ({batch_label})', misc_cost, '1 batch', misc_cost, misc_cost)
+
+    # Chocolate cost per gram, sourced from ingredient prices with a fallback to the
+    # known 500g pack price if the ingredient row is not present.
+    def _choc_per_gram(ing_name, fallback_500g_price):
+        ing = get_ingredient_price(ing_name)
+        if ing:
+            ppg = ing.get_price_per_gram()
+            if ppg:
+                return ppg, float(ing.price), ing.unit
+        return fallback_500g_price / 500.0, fallback_500g_price, '500g'
+
+    if is_red_velvet:
+        cocoa_cost = 25.0
+        batch_total += cocoa_cost
+        add_ing('Cocoa Powder', f'flat ({batch_label})', cocoa_cost, '1 batch', cocoa_cost, cocoa_cost)
+
+        rv_essence_cost = 2.0
+        batch_total += rv_essence_cost
+        add_ing('Red Velvet Essence', f'flat ({batch_label})', rv_essence_cost, '1 batch', rv_essence_cost, rv_essence_cost)
+
+        rv_extra_misc = 2.0
+        batch_total += rv_extra_misc
+        add_ing('Red Velvet Extra Misc', f'flat ({batch_label})', rv_extra_misc, '1 batch', rv_extra_misc, rv_extra_misc)
+
+        # Red Velvet uses white chocolate (40g per batch) instead of dark chocolate
+        wc_ppg, wc_pkg_price, wc_pkg = _choc_per_gram('White Chocolate', 200.0)
+        wc_cost = 40 * wc_ppg
+        batch_total += wc_cost
+        add_ing('White Chocolate', f'40g ({batch_label})', wc_pkg_price, wc_pkg, wc_ppg, wc_cost)
+    else:
+        # Choco Chip uses dark chocolate (40g per batch)
+        dc_ppg, dc_pkg_price, dc_pkg = _choc_per_gram('Dark Chocolate', 165.0)
+        dc_cost = 40 * dc_ppg
+        batch_total += dc_cost
+        add_ing('Dark Chocolate', f'40g ({batch_label})', dc_pkg_price, dc_pkg, dc_ppg, dc_cost)
+
+    single_cost = batch_total / COOKIE_BATCH_YIELD
+
+    if _is_cookie_box(variety_name):
+        add_ing('Single cookies × 5', f'{COOKIE_BOX_COUNT} cookies', round(single_cost, 4), '1 cookie', single_cost, single_cost * COOKIE_BOX_COUNT)
+        add_ing('Box Packing', '1 box', COOKIE_BOX_PACKING, '1 box', COOKIE_BOX_PACKING, COOKIE_BOX_PACKING)
+        per_unit = single_cost * COOKIE_BOX_COUNT + COOKIE_BOX_PACKING
+    else:
+        per_unit = single_cost
+
+    breakdown['cost_per_brownie'] = per_unit
+    breakdown['total_cost_16_brownies'] = per_unit
+    return breakdown
+
+
 def get_cost_breakdown(variety_name):
     """Get detailed cost breakdown for a variety showing how cost per brownie is calculated"""
     if IngredientPrice is None:
         return None
+
+    # Cookies use a dedicated per-unit recipe (not the brownie price-derived model)
+    if is_cookie(variety_name):
+        return cookie_cost_breakdown(variety_name)
     
     # Check if this is a combo pack
     variety = Variety.query.filter_by(name=variety_name).first()
@@ -782,22 +979,39 @@ def calculate_brownies_from_price(price, variety_name=None):
 
 
 def _effective_order_quantity(order):
-    """Units billed after returns."""
+    """Units billed after returns (used for revenue/pricing)."""
     return max(0, (order.quantity or 0) - (order.returns or 0))
+
+
+def _produced_order_quantity(order):
+    """Units actually produced, including returns.
+
+    Returned items still cost money to make, so cost/profit calculations use the
+    full produced quantity even though revenue is based on the effective quantity."""
+    return max(0, (order.quantity or 0))
 
 
 def _order_courier_float(order):
     """Parcel / courier charge (₹) on the order."""
+    if getattr(order, 'is_sample', False):
+        return 0.0
     return float(order.courier_price) if order.courier_price else 0.0
 
 
 def order_goods_revenue(order):
-    """Product line revenue: unit price × effective quantity (after returns)."""
+    """Product line revenue: unit price × effective quantity (after returns).
+
+    Sample orders are given away for free, so they earn ₹0 revenue (their cost is
+    still counted elsewhere via the recipe/price-derived calculation)."""
+    if getattr(order, 'is_sample', False):
+        return 0.0
     return float(order.price) * _effective_order_quantity(order)
 
 
 def order_total_receivable(order):
     """Amount the customer owes for the order: goods + parcel/courier."""
+    if getattr(order, 'is_sample', False):
+        return 0.0
     return order_goods_revenue(order) + _order_courier_float(order)
 
 
@@ -815,7 +1029,8 @@ def calculate_total_cost_and_profit(orders):
         variety = order.variety
         variety_name = variety.name if variety else 'Classic Brownie'
 
-        effective_quantity = _effective_order_quantity(order)
+        # Cost includes returns (produced quantity); revenue uses effective quantity.
+        produced_quantity = _produced_order_quantity(order)
 
         breakdown = get_cost_breakdown(variety_name)
         cost_per_brownie = breakdown.get('cost_per_brownie') if breakdown else None
@@ -823,15 +1038,15 @@ def calculate_total_cost_and_profit(orders):
         if cost_per_brownie is None:
             continue
 
-        if variety and variety.is_combo_pack():
-            total_cost += cost_per_brownie * effective_quantity
+        if (variety and variety.is_combo_pack()) or is_cookie(variety_name):
+            # Cost is the recipe's per-unit cost times the produced quantity
+            total_cost += cost_per_brownie * produced_quantity
             goods_revenue += order_goods_revenue(order)
         else:
             order_price = float(order.price)
-            order_quantity = float(effective_quantity)
 
             brownies_per_unit = calculate_brownies_from_price(order_price, variety_name)
-            brownies_count = brownies_per_unit * order_quantity
+            brownies_count = brownies_per_unit * float(produced_quantity)
             total_cost += brownies_count * cost_per_brownie
             goods_revenue += order_goods_revenue(order)
 
@@ -864,17 +1079,23 @@ def aggregate_variety_cost_breakdown_from_orders(orders):
 
         effective_quantity = _effective_order_quantity(order)
         order_quantity = float(effective_quantity)
+        # Cost includes returns (produced quantity); sales/units shown use effective qty.
+        produced_quantity = _produced_order_quantity(order)
 
         if variety and variety.is_combo_pack():
-            order_cost = cost_per_brownie * effective_quantity
+            order_cost = cost_per_brownie * produced_quantity
             g_rev = order_goods_revenue(order)
             brownies_per_combo = get_brownies_in_combo_pack(variety)
             brownies_count = brownies_per_combo * effective_quantity
+        elif is_cookie(variety_name):
+            order_cost = cost_per_brownie * produced_quantity
+            g_rev = order_goods_revenue(order)
+            brownies_count = effective_quantity
         else:
             order_price = float(order.price)
             brownies_per_unit = calculate_brownies_from_price(order_price, variety_name)
             brownies_count = brownies_per_unit * order_quantity
-            order_cost = brownies_count * cost_per_brownie
+            order_cost = brownies_per_unit * float(produced_quantity) * cost_per_brownie
             g_rev = order_goods_revenue(order)
 
         variety_cost_breakdown[variety_name]['sales'] += g_rev
@@ -896,7 +1117,7 @@ def format_variety_breakdown_rows(variety_cost_breakdown):
         profit = g_sales - data['cost'] - courier
         profit_pct = (profit / revenue * 100) if revenue > 0 else 0
         variety_obj = Variety.query.filter_by(name=variety_name).first()
-        if variety_obj and variety_obj.is_combo_pack():
+        if (variety_obj and variety_obj.is_combo_pack()) or is_cookie(variety_name):
             cost_per_unit = round(data['cost'] / data['quantity'], 2) if data['quantity'] > 0 else 0
         else:
             cost_per_unit = round(data['cost'] / data['brownies_count'], 2) if data['brownies_count'] > 0 else 0
@@ -943,6 +1164,7 @@ def add_order():
         payment_status = request.form.get('payment_status', 'unpaid')
         paid_amount = request.form.get('paid_amount', type=float) or 0
         courier_price = request.form.get('courier_price', type=float) or 0
+        is_sample = request.form.get('is_sample', type=str) == 'true'
         
         # Validation
         if not variety_id or not shop_id or not quantity or not price or not delivery_date_str:
@@ -960,20 +1182,28 @@ def add_order():
         # Calculate effective quantity (quantity - returns)
         effective_quantity = max(0, quantity - returns)
         
-        # Validate payment status
-        if payment_status not in ['paid', 'unpaid', 'partial']:
-            payment_status = 'unpaid'
-        
-        goods_amt = float(price) * effective_quantity
-        total_amount = goods_amt + float(courier_price or 0)
-        if payment_status == 'paid':
-            paid_amount = total_amount
-        elif payment_status == 'partial':
-            if paid_amount <= 0 or paid_amount >= total_amount:
-                flash('Partial payment amount must be greater than 0 and less than total order amount (including courier)', 'error')
-                return redirect(url_for('index'))
-        else:  # unpaid
+        if is_sample:
+            # Sample order: keep the (cost-basis) price so cost is counted, but it is
+            # given away for free, so it is fully "paid" at ₹0 and never pending.
+            payment_status = 'paid'
             paid_amount = 0
+            courier_price = 0
+            total_amount = 0.0
+        else:
+            # Validate payment status
+            if payment_status not in ['paid', 'unpaid', 'partial']:
+                payment_status = 'unpaid'
+            
+            goods_amt = float(price) * effective_quantity
+            total_amount = goods_amt + float(courier_price or 0)
+            if payment_status == 'paid':
+                paid_amount = total_amount
+            elif payment_status == 'partial':
+                if paid_amount <= 0 or paid_amount >= total_amount:
+                    flash('Partial payment amount must be greater than 0 and less than total order amount (including courier)', 'error')
+                    return redirect(url_for('index'))
+            else:  # unpaid
+                paid_amount = 0
         
         # Parse delivery date
         try:
@@ -999,7 +1229,8 @@ def add_order():
                 payment_status,
                 Decimal(str(paid_amount)),
                 Decimal(str(courier_price)),
-                returns
+                returns,
+                is_sample
             )
             order_total = total_amount
         else:
@@ -1012,7 +1243,8 @@ def add_order():
                 delivery_date=delivery_date,
                 payment_status=payment_status,
                 paid_amount=Decimal(str(paid_amount)),
-                courier_price=Decimal(str(courier_price))
+                courier_price=Decimal(str(courier_price)),
+                is_sample=is_sample
             )
             db_session.add(order)
             db_session.commit()
@@ -1215,6 +1447,199 @@ def delete_variety(id):
         db_session.rollback()
         flash(f'Error deleting variety: {str(e)}', 'error')
         return redirect(url_for('varieties'))
+
+
+@app.route('/templates')
+def order_templates():
+    """List and manage per-shop order templates."""
+    shops_list = Shop.query.order_by(Shop.name).all()
+    varieties_list = Variety.query.order_by(Variety.name).all()
+    variety_list_prices = variety_list_prices_map(varieties_list)
+
+    shop_name_by_id = {s.id: s.name for s in shops_list}
+    variety_name_by_id = {v.id: v.name for v in varieties_list}
+
+    templates_raw = []
+    if USE_GOOGLE_SHEETS:
+        from google_sheets import get_gs_db
+        gs = get_gs_db()
+        templates_raw = gs.get_templates()
+
+    # Enrich templates with display names and computed totals
+    templates = []
+    for t in templates_raw:
+        items = []
+        total = 0.0
+        for item in t.get('items', []):
+            try:
+                vid = int(item.get('id') if 'id' in item else item.get('variety_id'))
+            except (ValueError, TypeError):
+                continue
+            qty = int(item.get('quantity', 1) or 1)
+            amount = float(item.get('amount', 0) or 0)
+            total += amount * qty
+            items.append({
+                'variety_id': vid,
+                'variety_name': variety_name_by_id.get(vid, f'Variety #{vid}'),
+                'quantity': qty,
+                'amount': amount,
+            })
+        templates.append({
+            'id': t['id'],
+            'shop_id': t.get('shop_id'),
+            'shop_name': shop_name_by_id.get(t.get('shop_id'), 'Unknown shop'),
+            'name': t.get('name'),
+            'items': items,
+            'total': round(total, 2),
+        })
+
+    templates.sort(key=lambda x: (x['shop_name'] or '', x['name'] or ''))
+
+    return render_template(
+        'templates.html',
+        templates=templates,
+        shops=shops_list,
+        varieties=varieties_list,
+        variety_list_prices=variety_list_prices,
+        today_iso=date.today().isoformat(),
+        sheets_enabled=USE_GOOGLE_SHEETS,
+    )
+
+
+@app.route('/templates/add', methods=['POST'])
+def add_template():
+    """Create a new per-shop template with one or more variety lines."""
+    if not USE_GOOGLE_SHEETS:
+        flash('Templates are only available when using Google Sheets.', 'error')
+        return redirect(url_for('order_templates'))
+    try:
+        shop_id = request.form.get('shop_id', type=int)
+        name = (request.form.get('name') or '').strip()
+        variety_ids = request.form.getlist('variety_id')
+        quantities = request.form.getlist('quantity')
+        amounts = request.form.getlist('amount')
+
+        if not shop_id or not name:
+            flash('Shop and template name are required.', 'error')
+            return redirect(url_for('order_templates'))
+
+        items = []
+        for idx, vid in enumerate(variety_ids):
+            if not vid:
+                continue
+            try:
+                variety_id = int(vid)
+            except (ValueError, TypeError):
+                continue
+            try:
+                qty = int(quantities[idx]) if idx < len(quantities) and quantities[idx] else 1
+            except (ValueError, TypeError):
+                qty = 1
+            try:
+                amount = float(amounts[idx]) if idx < len(amounts) and amounts[idx] else 0.0
+            except (ValueError, TypeError):
+                amount = 0.0
+            if qty <= 0:
+                continue
+            items.append({'id': variety_id, 'quantity': qty, 'amount': amount})
+
+        if not items:
+            flash('Add at least one variety line to the template.', 'error')
+            return redirect(url_for('order_templates'))
+
+        from google_sheets import get_gs_db
+        gs = get_gs_db()
+        gs.add_template(shop_id, name, items)
+
+        flash(f'Template "{name}" created successfully.', 'success')
+        return redirect(url_for('order_templates'))
+
+    except Exception as e:
+        flash(f'Error creating template: {str(e)}', 'error')
+        return redirect(url_for('order_templates'))
+
+
+@app.route('/templates/delete/<int:id>', methods=['POST'])
+def delete_template(id):
+    """Delete a template."""
+    if not USE_GOOGLE_SHEETS:
+        flash('Templates are only available when using Google Sheets.', 'error')
+        return redirect(url_for('order_templates'))
+    try:
+        from google_sheets import get_gs_db
+        gs = get_gs_db()
+        gs.delete_template(id)
+        flash('Template deleted.', 'success')
+    except Exception as e:
+        flash(f'Error deleting template: {str(e)}', 'error')
+    return redirect(url_for('order_templates'))
+
+
+@app.route('/templates/<int:id>/apply', methods=['POST'])
+def apply_template(id):
+    """Apply a template: create one order per variety line at once."""
+    if not USE_GOOGLE_SHEETS:
+        flash('Templates are only available when using Google Sheets.', 'error')
+        return redirect(url_for('order_templates'))
+    try:
+        from google_sheets import get_gs_db
+        gs = get_gs_db()
+
+        template = next((t for t in gs.get_templates() if t['id'] == id), None)
+        if not template:
+            flash('Template not found.', 'error')
+            return redirect(url_for('order_templates'))
+
+        delivery_date_str = request.form.get('delivery_date')
+        payment_status = request.form.get('payment_status', 'unpaid')
+        if payment_status not in ['paid', 'unpaid']:
+            payment_status = 'unpaid'
+
+        try:
+            delivery_date = datetime.strptime(delivery_date_str, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            flash('Choose a valid delivery date.', 'error')
+            return redirect(url_for('order_templates'))
+
+        shop_id = template.get('shop_id')
+        created = 0
+        for item in template.get('items', []):
+            try:
+                variety_id = int(item.get('id') if 'id' in item else item.get('variety_id'))
+            except (ValueError, TypeError):
+                continue
+            qty = int(item.get('quantity', 1) or 1)
+            amount = float(item.get('amount', 0) or 0)
+            if qty <= 0 or amount <= 0:
+                continue
+
+            line_total = amount * qty
+            paid_amount = line_total if payment_status == 'paid' else 0
+
+            gs.add_order(
+                variety_id,
+                shop_id,
+                qty,
+                Decimal(str(amount)),
+                delivery_date,
+                payment_status,
+                Decimal(str(paid_amount)),
+                Decimal('0'),
+                0,
+                False
+            )
+            created += 1
+
+        if created == 0:
+            flash('Template has no valid lines to create orders from.', 'error')
+            return redirect(url_for('order_templates'))
+
+        flash(f'Created {created} order(s) from template "{template.get("name")}".', 'success')
+        return redirect(url_for('orders', shop_id=shop_id))
+
+    except Exception as e:
+        flash(f'Error applying template: {str(e)}', 'error')
+        return redirect(url_for('order_templates'))
 
 
 @app.route('/shops')
@@ -1715,6 +2140,9 @@ def _resolve_report_date_range(preset, date_from_str, date_to_str):
         end = date(y, m, calendar.monthrange(y, m)[1])
         return start, end
 
+    if preset == 'all_time':
+        return date(2000, 1, 1), today
+
     if preset == 'this_year':
         return date(today.year, 1, 1), date(today.year, 12, 31)
 
@@ -1900,6 +2328,14 @@ def api_reports_dashboard():
 
         start_d, end_d = _resolve_report_date_range(preset, date_from, date_to)
         all_orders = Order.query.all()
+
+        # For "all time", clamp the start to the earliest order so trend buckets and the
+        # period label reflect real data instead of spanning back to year 2000.
+        if (preset or '').strip().lower() == 'all_time':
+            order_dates = [d for d in (_order_delivery_date(o) for o in all_orders) if d is not None]
+            if order_dates:
+                start_d = min(order_dates)
+
         orders = _filter_orders_by_range_and_shop(all_orders, start_d, end_d, shop_id)
 
         payload = _build_report_dict_from_orders(orders)
@@ -2207,6 +2643,7 @@ def edit_order(id):
             payment_status = request.form.get('payment_status', default='unpaid')
             paid_amount = request.form.get('paid_amount', type=float, default=0.00)
             courier_price = request.form.get('courier_price', type=float, default=0.00)
+            is_sample = request.form.get('is_sample', type=str) == 'true'
             
             # Validation
             if not variety_id or not shop_id or not quantity or not price or not delivery_date_str:
@@ -2223,6 +2660,12 @@ def edit_order(id):
             
             # Calculate effective quantity (quantity - returns)
             effective_quantity = max(0, quantity - returns)
+            
+            if is_sample:
+                # Sample order: counted in cost but sold at ₹0
+                payment_status = 'paid'
+                paid_amount = 0.00
+                courier_price = 0.00
             
             # Parse delivery date
             try:
@@ -2250,9 +2693,10 @@ def edit_order(id):
                     payment_status,
                     Decimal(str(paid_amount)),
                     Decimal(str(courier_price)),
-                    returns
+                    returns,
+                    is_sample
                 )
-                total = float(Decimal(str(price)) * effective_quantity) + float(courier_price or 0)
+                total = 0.0 if is_sample else float(Decimal(str(price)) * effective_quantity) + float(courier_price or 0)
             else:
                 # For SQLite, update the object and commit
                 order.variety_id = variety_id
@@ -2264,6 +2708,7 @@ def edit_order(id):
                 order.payment_status = payment_status
                 order.paid_amount = Decimal(str(paid_amount))
                 order.courier_price = Decimal(str(courier_price))
+                order.is_sample = is_sample
                 db_session.commit()
                 total = order_total_receivable(order)
 
@@ -2306,7 +2751,8 @@ def mark_order_paid(id):
                 'paid',
                 Decimal(str(total_amount)),
                 order.courier_price or 0,
-                order.returns or 0
+                order.returns or 0,
+                bool(getattr(order, 'is_sample', False))
             )
         else:
             # For SQLite, update the object and commit
@@ -2376,7 +2822,8 @@ def mark_all_orders_paid(shop_id):
                     'paid',
                     Decimal(str(order_total)),
                     order.courier_price or 0,
-                    order.returns or 0
+                    order.returns or 0,
+                    bool(getattr(order, 'is_sample', False))
                 )
         else:
             for order in unpaid_orders:
@@ -2392,6 +2839,100 @@ def mark_all_orders_paid(shop_id):
         if not USE_GOOGLE_SHEETS:
             db_session.rollback()
         flash(f'Error marking orders as paid: {str(e)}', 'error')
+        return redirect(url_for('orders', shop_id=shop_id))
+
+
+@app.route('/shops/<int:shop_id>/record-payment', methods=['POST'])
+def record_shop_payment(shop_id):
+    """Record a lump-sum payment from a shop and allocate it across that shop's
+    outstanding (not fully paid, non-sample) orders, oldest first.
+
+    Orders fully covered become 'paid'; a partially covered order becomes 'partial'."""
+    try:
+        shop = Shop.query.get_or_404(shop_id)
+        amount = request.form.get('amount', type=float)
+
+        if not amount or amount <= 0:
+            flash('Enter a payment amount greater than 0.', 'error')
+            return redirect(url_for('orders', shop_id=shop_id))
+
+        # Outstanding orders for this shop, oldest first (delivery date, then created time)
+        shop_orders = Order.query.filter_by(shop_id=shop_id).all()
+
+        def _created_sort_key(o):
+            return o.created_at if o.created_at else datetime.min
+
+        outstanding = []
+        for order in shop_orders:
+            if getattr(order, 'is_sample', False):
+                continue
+            receivable = order_total_receivable(order)
+            paid_amt = float(order.paid_amount) if order.paid_amount else 0
+            if receivable - paid_amt > 0.001:
+                outstanding.append(order)
+
+        outstanding.sort(key=lambda o: (o.delivery_date, _created_sort_key(o)))
+
+        if not outstanding:
+            flash(f'All orders for {shop.name} are already paid!', 'info')
+            return redirect(url_for('orders', shop_id=shop_id))
+
+        remaining = float(amount)
+        updated_count = 0
+        applied_total = 0.0
+
+        for order in outstanding:
+            if remaining <= 0.001:
+                break
+            receivable = order_total_receivable(order)
+            paid_amt = float(order.paid_amount) if order.paid_amount else 0
+            pending = receivable - paid_amt
+            if pending <= 0:
+                continue
+
+            pay_now = min(remaining, pending)
+            new_paid = paid_amt + pay_now
+            new_status = 'paid' if (receivable - new_paid) <= 0.001 else 'partial'
+            if new_status == 'paid':
+                new_paid = receivable
+
+            if USE_GOOGLE_SHEETS:
+                from google_sheets import get_gs_db
+                gs = get_gs_db()
+                gs.update_order(
+                    order.id,
+                    order.variety_id,
+                    order.shop_id,
+                    order.quantity,
+                    order.price,
+                    order.delivery_date,
+                    new_status,
+                    Decimal(str(new_paid)),
+                    order.courier_price or 0,
+                    order.returns or 0,
+                    bool(getattr(order, 'is_sample', False))
+                )
+            else:
+                order.payment_status = new_status
+                order.paid_amount = Decimal(str(new_paid))
+
+            remaining -= pay_now
+            applied_total += pay_now
+            updated_count += 1
+
+        if not USE_GOOGLE_SHEETS:
+            db_session.commit()
+
+        msg = f'Recorded ₹{applied_total:.2f} across {updated_count} order(s) for {shop.name}.'
+        if remaining > 0.001:
+            msg += f' ₹{remaining:.2f} left over (all orders are now paid).'
+        flash(msg, 'success')
+        return redirect(url_for('orders', shop_id=shop_id))
+
+    except Exception as e:
+        if not USE_GOOGLE_SHEETS:
+            db_session.rollback()
+        flash(f'Error recording payment: {str(e)}', 'error')
         return redirect(url_for('orders', shop_id=shop_id))
 
 

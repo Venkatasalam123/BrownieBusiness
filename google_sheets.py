@@ -31,6 +31,7 @@ SHEET_VARIETIES = 'Varieties'
 SHEET_SHOPS = 'Shops'
 SHEET_ORDERS = 'Orders'
 SHEET_INGREDIENT_PRICES = 'IngredientPrices'
+SHEET_TEMPLATES = 'Templates'
 
 class GoogleSheetsDB:
     """Google Sheets database interface"""
@@ -526,6 +527,7 @@ class GoogleSheetsDB:
                         paid_amount_idx = 7
                         courier_price_idx = 8
                         created_at_idx = 9
+                        is_sample_idx = 10
                     elif len(row) == 9:
                         # Medium format with courier_price but no returns
                         variety_id = int(row[0]) if row[0] else None
@@ -538,6 +540,7 @@ class GoogleSheetsDB:
                         paid_amount_idx = 6
                         courier_price_idx = 7
                         created_at_idx = 8
+                        is_sample_idx = None
                     else:
                         # Old format (8 cols) without courier_price and returns
                         variety_id = int(row[0]) if row[0] else None
@@ -550,6 +553,7 @@ class GoogleSheetsDB:
                         paid_amount_idx = 6
                         courier_price_idx = None
                         created_at_idx = 7
+                        is_sample_idx = None
                     
                     orders.append({
                         'id': i,
@@ -562,14 +566,15 @@ class GoogleSheetsDB:
                         'payment_status': row[payment_status_idx] if len(row) > payment_status_idx else 'unpaid',
                         'paid_amount': Decimal(str(row[paid_amount_idx])) if len(row) > paid_amount_idx and row[paid_amount_idx] else Decimal('0'),
                         'courier_price': Decimal(str(row[courier_price_idx])) if courier_price_idx is not None and len(row) > courier_price_idx and row[courier_price_idx] else Decimal('0'),
-                        'created_at': (datetime.strptime(row[created_at_idx], '%Y-%m-%d %H:%M:%S').replace(tzinfo=IST) if len(row) > created_at_idx and row[created_at_idx] else get_ist_now())
+                        'created_at': (datetime.strptime(row[created_at_idx], '%Y-%m-%d %H:%M:%S').replace(tzinfo=IST) if len(row) > created_at_idx and row[created_at_idx] else get_ist_now()),
+                        'is_sample': (str(row[is_sample_idx]).strip().lower() in ('true', '1', 'yes')) if is_sample_idx is not None and len(row) > is_sample_idx and row[is_sample_idx] else False
                     })
                 except (ValueError, IndexError) as e:
                     print(f"Error parsing order row {i}: {e}")
                     continue
         return orders
     
-    def add_order(self, variety_id, shop_id, quantity, price, delivery_date, payment_status='unpaid', paid_amount=0, courier_price=0, returns=0):
+    def add_order(self, variety_id, shop_id, quantity, price, delivery_date, payment_status='unpaid', paid_amount=0, courier_price=0, returns=0, is_sample=False):
         """Add a new order"""
         values = [[
             str(variety_id),
@@ -581,11 +586,12 @@ class GoogleSheetsDB:
             payment_status,
             str(paid_amount),
             str(courier_price),
-            get_ist_now().strftime('%Y-%m-%d %H:%M:%S')
+            get_ist_now().strftime('%Y-%m-%d %H:%M:%S'),
+            'TRUE' if is_sample else 'FALSE'
         ]]
         self._append_sheet(SHEET_ORDERS, values)
-    
-    def update_order(self, row_id, variety_id, shop_id, quantity, price, delivery_date, payment_status, paid_amount, courier_price=0, returns=0):
+
+    def update_order(self, row_id, variety_id, shop_id, quantity, price, delivery_date, payment_status, paid_amount, courier_price=0, returns=0, is_sample=False):
         """Update an order"""
         values = [
             str(variety_id),
@@ -597,7 +603,8 @@ class GoogleSheetsDB:
             payment_status,
             str(paid_amount),
             str(courier_price),
-            get_ist_now().strftime('%Y-%m-%d %H:%M:%S')
+            get_ist_now().strftime('%Y-%m-%d %H:%M:%S'),
+            'TRUE' if is_sample else 'FALSE'
         ]
         self._update_row(SHEET_ORDERS, row_id, values)
     
@@ -654,6 +661,45 @@ class GoogleSheetsDB:
         ]
         self._update_row(SHEET_INGREDIENT_PRICES, row_id, values)
     
+    # Templates operations
+    def get_templates(self):
+        """Get all order templates. Items is a JSON list of {variety_id, quantity, amount}."""
+        rows = self._read_sheet(SHEET_TEMPLATES)
+        if not rows:
+            return []
+
+        templates = []
+        for i, row in enumerate(rows[1:], start=2):  # Skip header
+            if len(row) >= 2:
+                shop_id = None
+                try:
+                    shop_id = int(row[0]) if row[0] else None
+                except (ValueError, TypeError):
+                    shop_id = None
+                items = []
+                if len(row) > 2 and row[2]:
+                    try:
+                        items = json.loads(row[2])
+                    except (json.JSONDecodeError, TypeError):
+                        items = []
+                templates.append({
+                    'id': i,
+                    'shop_id': shop_id,
+                    'name': row[1],
+                    'items': items
+                })
+        return templates
+
+    def add_template(self, shop_id, name, items):
+        """Add a new template. items is a list of dicts or a JSON string."""
+        items_str = items if isinstance(items, str) else json.dumps(items)
+        values = [[str(shop_id), name, items_str]]
+        self._append_sheet(SHEET_TEMPLATES, values)
+
+    def delete_template(self, row_id):
+        """Delete a template by row id."""
+        self._delete_row(SHEET_TEMPLATES, row_id)
+
     def initialize_sheets(self):
         """Initialize sheets with headers if they don't exist"""
         try:
@@ -669,6 +715,9 @@ class GoogleSheetsDB:
             
             if not self._sheet_exists(SHEET_INGREDIENT_PRICES):
                 self._create_sheet(SHEET_INGREDIENT_PRICES)
+
+            if not self._sheet_exists(SHEET_TEMPLATES):
+                self._create_sheet(SHEET_TEMPLATES)
             
             # Check if sheets have headers and create them if needed
             varieties = self._read_sheet(SHEET_VARIETIES)
@@ -687,7 +736,11 @@ class GoogleSheetsDB:
             
             orders = self._read_sheet(SHEET_ORDERS)
             if not orders:
-                self._write_sheet(SHEET_ORDERS, [['Variety ID', 'Shop ID', 'Quantity', 'Returns', 'Price', 'Delivery Date', 'Payment Status', 'Paid Amount', 'Courier Price', 'Created At']], 'A1')
+                self._write_sheet(SHEET_ORDERS, [['Variety ID', 'Shop ID', 'Quantity', 'Returns', 'Price', 'Delivery Date', 'Payment Status', 'Paid Amount', 'Courier Price', 'Created At', 'Is Sample']], 'A1')
+            elif orders[0] and len(orders[0]) < 11:
+                # Add the Is Sample column header to an existing Orders sheet
+                header = list(orders[0]) + ['Is Sample']
+                self._write_sheet(SHEET_ORDERS, [header], 'A1')
             
             ingredient_prices = self._read_sheet(SHEET_INGREDIENT_PRICES)
             if not ingredient_prices:
@@ -708,6 +761,8 @@ class GoogleSheetsDB:
                     ['Pista Nuts', '445', '250g', '250', 'g'],
                     ['Milk Compound', '190', '500g', '500', 'g'],
                     ['White Compound', '205', '500g', '500', 'g'],
+                    ['Dark Chocolate', '165', '500g', '500', 'g'],
+                    ['White Chocolate', '200', '500g', '500', 'g'],
                     ['Oven Charges', '20', '16 brownies', '16', 'pc'],
                     ['Miscellaneous', '15', '16 brownies', '16', 'pc'],
                     ['Packing', '28.8', '16 brownies', '16', 'pc'],
@@ -715,6 +770,10 @@ class GoogleSheetsDB:
                 ]
                 for ing_data in default_prices:
                     self.add_ingredient_price(ing_data[0], Decimal(ing_data[1]), ing_data[2], Decimal(ing_data[3]), ing_data[4])
+
+            templates = self._read_sheet(SHEET_TEMPLATES)
+            if not templates:
+                self._write_sheet(SHEET_TEMPLATES, [['Shop ID', 'Name', 'Items']], 'A1')
             
             print("✓ Sheets initialized")
         except Exception as e:

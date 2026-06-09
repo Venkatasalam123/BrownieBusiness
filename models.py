@@ -137,6 +137,7 @@ class Order(db.Model):
     payment_status = db.Column(db.String(20), nullable=False, default='unpaid')  # 'paid', 'unpaid', 'partial'
     paid_amount = db.Column(db.Numeric(10, 2), nullable=True, default=0)
     courier_price = db.Column(db.Numeric(10, 2), nullable=True, default=0)  # Courier/shipping cost
+    is_sample = db.Column(db.Boolean, nullable=False, default=False)  # Sample order: counted in cost, sold at ₹0
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     def __repr__(self):
@@ -144,8 +145,12 @@ class Order(db.Model):
     
     def to_dict(self):
         effective_quantity = max(0, self.quantity - (self.returns or 0))
-        goods = float(self.price) * effective_quantity
-        courier = float(self.courier_price) if self.courier_price else 0.0
+        if self.is_sample:
+            goods = 0.0
+            courier = 0.0
+        else:
+            goods = float(self.price) * effective_quantity
+            courier = float(self.courier_price) if self.courier_price else 0.0
         return {
             'id': self.id,
             'variety_id': self.variety_id,
@@ -159,7 +164,8 @@ class Order(db.Model):
             'total': goods + courier,
             'payment_status': self.payment_status,
             'paid_amount': float(self.paid_amount) if self.paid_amount else 0,
-            'courier_price': float(self.courier_price) if self.courier_price else 0
+            'courier_price': float(self.courier_price) if self.courier_price else 0,
+            'is_sample': bool(self.is_sample)
         }
 
 

@@ -59,6 +59,21 @@
                             </button>
                         </form>
                     </div>
+                    <div class="mt-2">
+                        <form method="POST" action="{{ url_for('record_shop_payment', shop_id=selected_shop.id) }}" class="d-flex align-items-center gap-2 flex-wrap">
+                            <label for="amount_paid" class="form-label mb-0">
+                                <i class="fas fa-hand-holding-usd me-1"></i><strong>Amount Paid by {{ selected_shop.name }}:</strong>
+                            </label>
+                            <div class="input-group" style="max-width: 220px;">
+                                <span class="input-group-text">₹</span>
+                                <input type="number" step="0.01" min="0.01" name="amount" id="amount_paid" class="form-control" placeholder="e.g. 500" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-sm">
+                                <i class="fas fa-money-bill-wave me-1"></i>Record Payment
+                            </button>
+                            <small class="text-muted">Applied to oldest outstanding orders first.</small>
+                        </form>
+                    </div>
                     {% endif %}
                 </div>
                 
@@ -110,14 +125,15 @@
                                             {% for order in orders %}
                                             {% set returns = order.returns if order.returns else 0 %}
                                             {% set effective_qty = (order.quantity or 0) - returns %}
-                                            {% set courier_amt = (order.courier_price|float) if order.courier_price else 0 %}
-                                            {% set order_total = (order.price|float) * effective_qty + courier_amt %}
+                                            {% set is_sample = order.is_sample if order.is_sample is defined else false %}
+                                            {% set courier_amt = 0 if is_sample else ((order.courier_price|float) if order.courier_price else 0) %}
+                                            {% set order_total = 0 if is_sample else ((order.price|float) * effective_qty + courier_amt) %}
                                             {% set payment_status = order.payment_status if order.payment_status else 'unpaid' %}
-                                            {% set paid_amt = (order.paid_amount|float) if order.paid_amount else 0 %}
+                                            {% set paid_amt = 0 if is_sample else ((order.paid_amount|float) if order.paid_amount else 0) %}
                                             {% set pending_amt = order_total - paid_amt %}
                                             <tr>
                                                 <td><strong>{{ order.shop.name }}</strong></td>
-                                                <td>{{ order.variety.name }}</td>
+                                                <td>{{ order.variety.name }}{% if is_sample %} <span class="badge bg-info text-dark">Sample</span>{% endif %}</td>
                                                 <td>{{ order.quantity }}</td>
                                                 <td>
                                                     {% if returns > 0 %}
@@ -130,7 +146,9 @@
                                                 <td>₹{{ "%.2f"|format(order.price) }}</td>
                                                 <td><strong>₹{{ "%.2f"|format(order_total) }}</strong></td>
                                                 <td>
-                                                    {% if payment_status == 'paid' %}
+                                                    {% if is_sample %}
+                                                        <span class="badge bg-info text-dark">Sample (₹0)</span>
+                                                    {% elif payment_status == 'paid' %}
                                                         <span class="badge bg-success">Paid</span>
                                                     {% elif payment_status == 'partial' %}
                                                         <span class="badge bg-warning">Partial</span>

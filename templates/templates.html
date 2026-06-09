@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}Templates - Brownie Sales Tracker{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-clipboard-list me-2"></i>Order Templates
+                </h2>
+            </div>
+            <div class="card-body">
+                {% if not sheets_enabled %}
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>Templates are only available when the app is configured to use Google Sheets.
+                </div>
+                {% endif %}
+
+                <!-- Create template -->
+                <div class="card mb-4">
+                    <div class="card-header bg-light">
+                        <strong><i class="fas fa-plus-circle me-2"></i>New Template</strong>
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('add_template') }}" id="templateForm">
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-5">
+                                    <label for="shop_id" class="form-label">Shop/Customer <span class="text-danger">*</span></label>
+                                    <select class="form-select" id="shop_id" name="shop_id" required {% if not sheets_enabled %}disabled{% endif %}>
+                                        <option value="">Select Shop/Customer</option>
+                                        {% for shop in shops %}
+                                        <option value="{{ shop.id }}">{{ shop.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-7">
+                                    <label for="name" class="form-label">Template Name <span class="text-danger">*</span></label>
+                                    <input type="text" class="form-control" id="name" name="name" placeholder="e.g. Weekly standing order" required {% if not sheets_enabled %}disabled{% endif %}>
+                                </div>
+                            </div>
+
+                            <label class="form-label">Variety Lines</label>
+                            <div id="lineRows">
+                                <div class="row g-2 mb-2 line-row">
+                                    <div class="col-md-6">
+                                        <select class="form-select variety-select" name="variety_id" {% if not sheets_enabled %}disabled{% endif %}>
+                                            <option value="">Select Variety</option>
+                                            {% for variety in varieties %}
+                                            <option value="{{ variety.id }}" data-price="{{ variety_list_prices.get(variety.id, variety.default_price) }}">{{ variety.name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input type="number" class="form-control" name="quantity" min="1" value="1" placeholder="Qty" {% if not sheets_enabled %}disabled{% endif %}>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <input type="number" class="form-control amount-input" name="amount" step="0.01" min="0" placeholder="₹ Amount" {% if not sheets_enabled %}disabled{% endif %}>
+                                    </div>
+                                    <div class="col-md-1 d-grid">
+                                        <button type="button" class="btn btn-outline-danger remove-line" title="Remove line"><i class="fas fa-times"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="addLineBtn" {% if not sheets_enabled %}disabled{% endif %}>
+                                <i class="fas fa-plus me-1"></i>Add Variety Line
+                            </button>
+
+                            <div class="mt-3">
+                                <button type="submit" class="btn btn-primary" {% if not sheets_enabled %}disabled{% endif %}>
+                                    <i class="fas fa-save me-2"></i>Save Template
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Existing templates -->
+                {% if templates %}
+                <div class="row">
+                    {% for t in templates %}
+                    <div class="col-12 col-lg-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ t.name }}</strong>
+                                    <span class="badge bg-info ms-2"><i class="fas fa-store me-1"></i>{{ t.shop_name }}</span>
+                                </div>
+                                <form method="POST" action="{{ url_for('delete_template', id=t.id) }}" onsubmit="return confirm('Delete template \'{{ t.name }}\'?');">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete"><i class="fas fa-trash"></i></button>
+                                </form>
+                            </div>
+                            <div class="card-body">
+                                <table class="table table-sm mb-3">
+                                    <thead>
+                                        <tr><th>Variety</th><th class="text-center">Qty</th><th class="text-end">Amount</th><th class="text-end">Line</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in t.items %}
+                                        <tr>
+                                            <td>{{ item.variety_name }}</td>
+                                            <td class="text-center">{{ item.quantity }}</td>
+                                            <td class="text-end">₹{{ "%.2f"|format(item.amount) }}</td>
+                                            <td class="text-end">₹{{ "%.2f"|format(item.amount * item.quantity) }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr class="table-light">
+                                            <td colspan="3" class="text-end"><strong>Total</strong></td>
+                                            <td class="text-end"><strong>₹{{ "%.2f"|format(t.total) }}</strong></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+
+                                <form method="POST" action="{{ url_for('apply_template', id=t.id) }}" class="row g-2 align-items-end">
+                                    <div class="col-5">
+                                        <label class="form-label mb-1 small">Delivery Date</label>
+                                        <input type="date" class="form-control form-control-sm" name="delivery_date" value="{{ today_iso }}" required>
+                                    </div>
+                                    <div class="col-4">
+                                        <label class="form-label mb-1 small">Payment</label>
+                                        <select class="form-select form-select-sm" name="payment_status">
+                                            <option value="unpaid">Not Paid</option>
+                                            <option value="paid">Paid</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-3 d-grid">
+                                        <button type="submit" class="btn btn-success btn-sm">
+                                            <i class="fas fa-bolt me-1"></i>Apply
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-clipboard-list fa-3x text-muted mb-3"></i>
+                    <p class="text-muted">No templates yet. Create one above to quickly add repeat orders.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const lineRows = document.getElementById('lineRows');
+        const addLineBtn = document.getElementById('addLineBtn');
+
+        function autoFillAmount(selectEl) {
+            const row = selectEl.closest('.line-row');
+            if (!row) return;
+            const amountInput = row.querySelector('.amount-input');
+            const opt = selectEl.options[selectEl.selectedIndex];
+            const price = opt ? opt.getAttribute('data-price') : null;
+            if (price && amountInput && !amountInput.value) {
+                amountInput.value = price;
+            }
+        }
+
+        function wireRow(row) {
+            const select = row.querySelector('.variety-select');
+            if (select) {
+                select.addEventListener('change', function() { autoFillAmount(select); });
+            }
+            const removeBtn = row.querySelector('.remove-line');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', function() {
+                    const rows = lineRows.querySelectorAll('.line-row');
+                    if (rows.length > 1) {
+                        row.remove();
+                    } else {
+                        // Clear the last remaining row instead of removing it
+                        row.querySelectorAll('input').forEach(i => i.value = i.name === 'quantity' ? '1' : '');
+                        const s = row.querySelector('.variety-select');
+                        if (s) s.value = '';
+                    }
+                });
+            }
+        }
+
+        // Wire the initial row
+        lineRows.querySelectorAll('.line-row').forEach(wireRow);
+
+        if (addLineBtn) {
+            addLineBtn.addEventListener('click', function() {
+                const first = lineRows.querySelector('.line-row');
+                const clone = first.cloneNode(true);
+                clone.querySelectorAll('input').forEach(i => i.value = i.name === 'quantity' ? '1' : '');
+                const s = clone.querySelector('.variety-select');
+                if (s) s.value = '';
+                lineRows.appendChild(clone);
+                wireRow(clone);
+            });
+        }
+    });
+</script>
+{% endblock %}

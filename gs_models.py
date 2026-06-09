@@ -248,7 +248,9 @@ class OrderQuery:
             payment_status=o['payment_status'],
             paid_amount=o['paid_amount'],
             courier_price=o.get('courier_price', 0),
-            created_at=o['created_at']
+            created_at=o['created_at'],
+            returns=o.get('returns', 0),
+            is_sample=o.get('is_sample', False)
         ) for o in orders_data]
         
         # Apply sorting
@@ -580,10 +582,11 @@ class Order:
     paid_amount = Column('paid_amount')
     courier_price = Column('courier_price')
     created_at = Column('created_at')
+    is_sample = Column('is_sample')
     
     def __init__(self, id=None, variety_id=None, shop_id=None, quantity=None, 
                  returns=0, price=None, delivery_date=None, payment_status='unpaid', 
-                 paid_amount=0, courier_price=0, created_at=None):
+                 paid_amount=0, courier_price=0, created_at=None, is_sample=False):
         self.id = id
         self.variety_id = variety_id
         self.shop_id = shop_id
@@ -595,6 +598,7 @@ class Order:
         self.paid_amount = paid_amount
         self.courier_price = courier_price
         self.created_at = created_at
+        self.is_sample = bool(is_sample)
         self._variety = None
         self._shop = None
     
@@ -615,8 +619,12 @@ class Order:
     
     def to_dict(self):
         effective_quantity = max(0, (self.quantity or 0) - (self.returns or 0))
-        goods = float(self.price) * effective_quantity if self.price else 0.0
-        courier = float(self.courier_price) if self.courier_price else 0.0
+        if self.is_sample:
+            goods = 0.0
+            courier = 0.0
+        else:
+            goods = float(self.price) * effective_quantity if self.price else 0.0
+            courier = float(self.courier_price) if self.courier_price else 0.0
         return {
             'id': self.id,
             'variety_id': self.variety_id,
@@ -631,6 +639,7 @@ class Order:
             'courier_price': courier,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'total': goods + courier,
+            'is_sample': self.is_sample,
         }
 
 
@@ -710,7 +719,9 @@ class DBSession:
             gs.add_order(
                 obj.variety_id, obj.shop_id, obj.quantity, obj.price,
                 obj.delivery_date, obj.payment_status, obj.paid_amount,
-                obj.courier_price if hasattr(obj, 'courier_price') and obj.courier_price else 0
+                obj.courier_price if hasattr(obj, 'courier_price') and obj.courier_price else 0,
+                obj.returns or 0,
+                bool(getattr(obj, 'is_sample', False))
             )
         elif isinstance(obj, IngredientPrice):
             gs.add_ingredient_price(

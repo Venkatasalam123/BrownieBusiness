@@ -103,7 +103,7 @@
                         <!-- Action Buttons: Update, Delete -->
                         <div class="d-flex gap-2">
                             <!-- Update Button -->
-                            <button type="button" class="btn btn-primary flex-fill" onclick="editVariety({{ variety.id }}, '{{ variety.name }}', {{ lp }}, {{ variety.get_combo_pack_varieties()|tojson }})" title="Update">
+                            <button type="button" class="btn btn-primary flex-fill" onclick='editVariety({{ variety.id }}, {{ variety.name|tojson }}, {{ lp }})' title="Update">
                                 <i class="fas fa-edit"></i>
                             </button>
                             
@@ -173,7 +173,7 @@
                                     <button type="submit" class="btn btn-success flex-fill" title="Save">
                                         <i class="fas fa-check"></i>
                                     </button>
-                                    <button type="button" class="btn btn-secondary flex-fill" onclick="cancelEditVariety({{ variety.id }}, '{{ variety.name }}', {{ lp }})" title="Cancel">
+                                    <button type="button" class="btn btn-secondary flex-fill" onclick='cancelEditVariety({{ variety.id }}, {{ variety.name|tojson }}, {{ lp }})' title="Cancel">
                                         <i class="fas fa-times"></i>
                                     </button>
                                 </div>
@@ -203,7 +203,7 @@
                                     <span class="badge bg-info">₹{{ "%.2f"|format(lp) }}</span>
                                 </td>
                                 <td>
-                                    <button type="button" class="btn btn-sm btn-primary" onclick="editVariety({{ variety.id }}, '{{ variety.name }}', {{ lp }}, {{ variety.get_combo_pack_varieties()|tojson }})" title="Update">
+                                    <button type="button" class="btn btn-sm btn-primary" onclick='editVariety({{ variety.id }}, {{ variety.name|tojson }}, {{ lp }})' title="Update">
                                         <i class="fas fa-edit"></i>
                                     </button>
                                 </td>
@@ -277,7 +277,7 @@
                                             </button>
                                         </div>
                                         <div>
-                                            <button type="button" class="btn btn-sm btn-secondary" onclick="cancelEditVarietyDesktop({{ variety.id }}, '{{ variety.name }}', {{ lp }})" title="Cancel">
+                                            <button type="button" class="btn btn-sm btn-secondary" onclick='cancelEditVarietyDesktop({{ variety.id }}, {{ variety.name|tojson }}, {{ lp }})' title="Cancel">
                                                 <i class="fas fa-times"></i>
                                             </button>
                                         </div>

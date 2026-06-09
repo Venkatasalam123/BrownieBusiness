@@ -92,6 +92,14 @@
                             <input type="number" class="form-control form-control-lg" id="courier_price" name="courier_price" step="0.01" min="0" value="{{ order.courier_price if order.courier_price else 0 }}">
                             <small class="form-text">Courier/shipping cost (if applicable)</small>
                         </div>
+                        <div class="col-md-6 mb-4 d-flex align-items-center">
+                            <div class="form-check form-switch mt-3">
+                                <input class="form-check-input" type="checkbox" role="switch" id="is_sample" name="is_sample" value="true" {% if order.is_sample %}checked{% endif %}>
+                                <label class="form-check-label" for="is_sample">
+                                    <i class="fas fa-gift me-2"></i>Sample (counted in cost, sold at ₹0)
+                                </label>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="row">
@@ -134,6 +142,8 @@
         const priceInput = document.getElementById('price');
         const quantityInput = document.getElementById('quantity');
         const returnsInput = document.getElementById('returns');
+        const courierInput = document.getElementById('courier_price');
+        const sampleToggle = document.getElementById('is_sample');
 
         function getEffectiveQuantity() {
             const quantity = parseFloat(quantityInput.value || 0);
@@ -213,9 +223,25 @@
             updatePaidAmountState();
         });
 
+        function updateSampleState() {
+            if (!sampleToggle) return;
+            const sample = sampleToggle.checked;
+            paymentStatusSelect.disabled = sample;
+            paidAmountInput.disabled = sample || paymentStatusSelect.value !== 'partial';
+            courierInput.disabled = sample;
+            if (!sample) {
+                updatePaidAmountState();
+            }
+        }
+
+        if (sampleToggle) {
+            sampleToggle.addEventListener('change', updateSampleState);
+        }
+
         // Initial state setup
         updatePaidAmountState();
         updateTotal();
+        updateSampleState();
     });
 </script>
 {% endblock %}
