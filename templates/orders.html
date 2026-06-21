@@ -193,9 +193,21 @@
                                                         </button>
                                                     </form>
                                                     {% endif %}
-                                                    <a href="{{ url_for('edit_order', id=order.id) }}" class="btn btn-sm btn-primary" title="Edit Order">
+                                                    <a href="{{ url_for('edit_order', id=order.id) }}" class="btn btn-sm btn-primary me-1" title="Edit Order">
                                                         <i class="fas fa-edit"></i>
                                                     </a>
+                                                    <form method="POST" action="{{ url_for('delete_order', id=order.id) }}" class="d-inline"
+                                                          onsubmit="return confirm('Delete this order for {{ order.shop.name }} ({{ order.variety.name }})?');">
+                                                        {% if shop_id_filter %}
+                                                        <input type="hidden" name="shop_id" value="{{ shop_id_filter }}">
+                                                        {% endif %}
+                                                        {% if pending_only %}
+                                                        <input type="hidden" name="pending_only" value="true">
+                                                        {% endif %}
+                                                        <button type="submit" class="btn btn-sm btn-danger" title="Delete Order">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </form>
                                                 </td>
                                             </tr>
                                             {% endfor %}

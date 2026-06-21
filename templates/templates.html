@@ -98,7 +98,7 @@
                                         <tr><th>Variety</th><th class="text-center">Qty</th><th class="text-end">Amount</th><th class="text-end">Line</th></tr>
                                     </thead>
                                     <tbody>
-                                        {% for item in t.items %}
+                                        {% for item in t['items'] %}
                                         <tr>
                                             <td>{{ item.variety_name }}</td>
                                             <td class="text-center">{{ item.quantity }}</td>

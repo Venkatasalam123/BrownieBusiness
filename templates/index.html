@@ -5,6 +5,89 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-12">
+
+        <!-- ── Quick Add from Template ── -->
+        {% if templates_for_ui %}
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center"
+                 style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#templatePanel" aria-expanded="false">
+                <h2 class="card-title mb-0">
+                    <i class="fas fa-clipboard-list me-2"></i>Quick Add from Template
+                </h2>
+                <i class="fas fa-chevron-down" id="templateChevron"></i>
+            </div>
+            <div class="collapse" id="templatePanel">
+                <div class="card-body">
+                    <!-- Step 1: pick shop -->
+                    <div class="mb-3">
+                        <label class="form-label"><i class="fas fa-store me-2"></i>Shop/Customer</label>
+                        <select class="form-select form-select-lg" id="tpl_shop_id">
+                            <option value="">Select a shop…</option>
+                            {% for shop in shops %}
+                            <option value="{{ shop.id }}">{{ shop.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Step 2: pick template (filtered by shop) -->
+                    <div class="mb-3" id="tpl_template_row" style="display:none;">
+                        <label class="form-label"><i class="fas fa-clipboard-list me-2"></i>Template</label>
+                        <select class="form-select form-select-lg" id="tpl_template_id">
+                            <option value="">Select a template…</option>
+                        </select>
+                    </div>
+
+                    <!-- Step 3: preview -->
+                    <div id="tpl_preview" class="mb-3" style="display:none;">
+                        <label class="form-label"><i class="fas fa-list me-2"></i>Items in this template</label>
+                        <table class="table table-sm table-bordered mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Variety</th>
+                                    <th class="text-center">Qty</th>
+                                    <th class="text-end">Amount (₹)</th>
+                                    <th class="text-end">Line total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tpl_preview_body"></tbody>
+                            <tfoot>
+                                <tr class="table-light fw-bold">
+                                    <td colspan="3" class="text-end">Total</td>
+                                    <td class="text-end" id="tpl_preview_total"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <!-- Step 4: delivery date + payment + apply -->
+                    <div id="tpl_apply_row" style="display:none;">
+                        <form id="tpl_apply_form" method="POST" action="">
+                            <div class="row g-3 align-items-end">
+                                <div class="col-sm-5">
+                                    <label class="form-label"><i class="fas fa-calendar-alt me-2"></i>Delivery Date</label>
+                                    <input type="date" class="form-control form-control-lg" name="delivery_date" id="tpl_delivery_date" required>
+                                </div>
+                                <div class="col-sm-4">
+                                    <label class="form-label"><i class="fas fa-money-bill-wave me-2"></i>Payment</label>
+                                    <select class="form-select form-select-lg" name="payment_status">
+                                        <option value="unpaid">Not Paid</option>
+                                        <option value="paid">Paid</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-3">
+                                    <button type="submit" class="btn btn-success btn-lg w-100">
+                                        <i class="fas fa-bolt me-2"></i>Apply
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- ── Manual single order ── -->
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title mb-0">Add New Order</h2>
@@ -55,7 +138,7 @@
                         <label for="price" class="form-label">
                             <i class="fas fa-rupee-sign me-2"></i>Price (₹) <span class="text-danger">*</span>
                         </label>
-                        <input type="number" class="form-control form-control-lg" id="price" name="price" step="0.01" min="0.01" required>
+                        <input type="number" class="form-control form-control-lg" id="price" name="price" step="0.01" min="0" required>
                         <small class="form-text text-muted">Default price from variety, editable</small>
                     </div>
 
@@ -109,12 +192,114 @@
                 </form>
             </div>
         </div>
+
     </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+    // ── Template panel ──────────────────────────────────────────────────────────
+    const TEMPLATES = {{ templates_for_ui | tojson }};
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const tplShopSel   = document.getElementById('tpl_shop_id');
+        const tplTplRow    = document.getElementById('tpl_template_row');
+        const tplTplSel    = document.getElementById('tpl_template_id');
+        const tplPreview   = document.getElementById('tpl_preview');
+        const tplPreviewBody = document.getElementById('tpl_preview_body');
+        const tplPreviewTotal = document.getElementById('tpl_preview_total');
+        const tplApplyRow  = document.getElementById('tpl_apply_row');
+        const tplApplyForm = document.getElementById('tpl_apply_form');
+        const tplDelivery  = document.getElementById('tpl_delivery_date');
+
+        // Sync delivery date default for template panel
+        const today = new Date().toISOString().split('T')[0];
+        if (tplDelivery) tplDelivery.value = today;
+
+        // Chevron toggle
+        const panel = document.getElementById('templatePanel');
+        const chevron = document.getElementById('templateChevron');
+        if (panel && chevron) {
+            panel.addEventListener('show.bs.collapse', () => {
+                chevron.classList.replace('fa-chevron-down', 'fa-chevron-up');
+            });
+            panel.addEventListener('hide.bs.collapse', () => {
+                chevron.classList.replace('fa-chevron-up', 'fa-chevron-down');
+            });
+        }
+
+        function resetTemplatePanel() {
+            if (tplTplRow)   tplTplRow.style.display   = 'none';
+            if (tplPreview)  tplPreview.style.display  = 'none';
+            if (tplApplyRow) tplApplyRow.style.display = 'none';
+        }
+
+        if (tplShopSel) {
+            tplShopSel.addEventListener('change', function () {
+                resetTemplatePanel();
+                const shopId = parseInt(this.value);
+                if (!shopId) return;
+
+                // Filter templates for this shop
+                const matching = TEMPLATES.filter(t => t.shop_id === shopId);
+                if (!matching.length) return;
+
+                // Populate template dropdown
+                tplTplSel.innerHTML = '<option value="">Select a template…</option>';
+                matching.forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.id;
+                    opt.textContent = t.name;
+                    opt.dataset.tpl = JSON.stringify(t);
+                    tplTplSel.appendChild(opt);
+                });
+                tplTplRow.style.display = 'block';
+
+                // If only one template, auto-select it
+                if (matching.length === 1) {
+                    tplTplSel.selectedIndex = 1;
+                    tplTplSel.dispatchEvent(new Event('change'));
+                }
+            });
+        }
+
+        if (tplTplSel) {
+            tplTplSel.addEventListener('change', function () {
+                tplPreview.style.display  = 'none';
+                tplApplyRow.style.display = 'none';
+
+                const opt = this.options[this.selectedIndex];
+                if (!opt || !opt.dataset.tpl) return;
+
+                const tpl = JSON.parse(opt.dataset.tpl);
+                if (!tpl.items || !tpl.items.length) return;
+
+                // Build preview table
+                tplPreviewBody.innerHTML = '';
+                let total = 0;
+                tpl.items.forEach(item => {
+                    const line = item.amount * item.quantity;
+                    total += line;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${item.variety_name}</td>
+                        <td class="text-center">${item.quantity}</td>
+                        <td class="text-end">₹${item.amount.toFixed(2)}</td>
+                        <td class="text-end">₹${line.toFixed(2)}</td>`;
+                    tplPreviewBody.appendChild(tr);
+                });
+                tplPreviewTotal.textContent = '₹' + total.toFixed(2);
+                tplPreview.style.display = 'block';
+
+                // Set form action to the apply route for this template
+                tplApplyForm.action = '/templates/' + tpl.id + '/apply';
+                tplApplyRow.style.display = 'block';
+            });
+        }
+    });
+
+    // ── Manual order form ────────────────────────────────────────────────────────
     // Set today's date as default
     document.addEventListener('DOMContentLoaded', function() {
         const today = new Date().toISOString().split('T')[0];

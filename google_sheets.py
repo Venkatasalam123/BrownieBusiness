@@ -466,7 +466,12 @@ class GoogleSheetsDB:
     def delete_variety(self, row_id):
         """Delete a variety"""
         self._delete_row(SHEET_VARIETIES, row_id)
-    
+
+    def delete_order(self, row_id):
+        """Delete an order"""
+        self._delete_row(SHEET_ORDERS, row_id)
+        self._clear_cache(SHEET_ORDERS)
+
     # Shops operations
     def get_shops(self):
         """Get all shops"""

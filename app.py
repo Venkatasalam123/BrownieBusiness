@@ -151,21 +151,26 @@ def _apply_standard_combo_pack_contents():
 
 
 def get_variety_list_price(variety):
-    """List/default selling price: regular variety uses default_price; combo uses Combo Pack Config —
-    sum of (each child variety's default_price × quantity) plus extra_packing_cost from JSON."""
+    """Selling price for a variety.
+    Always uses the stored default_price when it is positive.
+    Falls back to computing from combo children only when default_price is 0 / unset."""
     if not variety:
         return 0.0
-    if not variety.is_combo_pack():
-        return float(variety.default_price or 0)
-    total = 0.0
-    for item in variety.get_combo_pack_varieties():
-        vid = item.get('id')
-        qty = int(item.get('quantity', 1))
-        child = Variety.query.get(vid)
-        if child and not child.is_combo_pack():
-            total += float(child.default_price or 0) * qty
-    total += float(variety.get_extra_packing_cost())
-    return round(total, 2)
+    stored = float(variety.default_price or 0)
+    if stored > 0:
+        return stored
+    # Fallback for combo packs whose price has not been set yet
+    if variety.is_combo_pack():
+        total = 0.0
+        for item in variety.get_combo_pack_varieties():
+            vid = item.get('id')
+            qty = int(item.get('quantity', 1))
+            child = Variety.query.get(vid)
+            if child and not child.is_combo_pack():
+                total += float(child.default_price or 0) * qty
+        total += float(variety.get_extra_packing_cost())
+        return round(total, 2)
+    return stored
 
 
 def variety_list_prices_map(varieties_seq):
@@ -174,31 +179,8 @@ def variety_list_prices_map(varieties_seq):
 
 
 def _sync_combo_pack_default_prices_from_config():
-    """Set each combo row's stored Default Price to sum(child defaults × qty) + extra packing."""
-    modified_sqlite = False
-    for v in Variety.query.all():
-        if not v.is_combo_pack():
-            continue
-        computed = get_variety_list_price(v)
-        stored = float(v.default_price or 0)
-        if abs(stored - computed) < 0.01:
-            continue
-        if USE_GOOGLE_SHEETS:
-            from google_sheets import get_gs_db
-            gs = get_gs_db()
-            gs.update_variety(
-                v.id,
-                v.name,
-                Decimal(str(computed)),
-                v.combo_pack_config or '',
-            )
-            print(f"✓ Synced default price for '{v.name}': ₹{stored:.2f} → ₹{computed:.2f}")
-        else:
-            v.default_price = Decimal(str(computed))
-            modified_sqlite = True
-            print(f"✓ Synced default price for '{v.name}': ₹{stored:.2f} → ₹{computed:.2f}")
-    if modified_sqlite:
-        db_session.commit()
+    """No-op: combo variety prices are now set manually by the user and must not be overwritten."""
+    pass
 
 
 def _ensure_cookie_varieties():
@@ -1016,20 +998,29 @@ def order_total_receivable(order):
 
 
 def calculate_total_cost_and_profit(orders):
-    """Calculate total ingredient cost and profit for a list of orders"""
+    """Calculate total ingredient cost and profit for a list of orders.
+
+    Cost rule:
+      - total_cost uses the PRODUCED quantity (includes returned items) so the
+        full manufacturing expense is visible in reports.
+    Profit rule:
+      - profit uses the EFFECTIVE quantity (after returns) for cost, so returned
+        items do NOT reduce the profit figure — they are a separate write-off.
+    """
     if IngredientPrice is None:
         # Fallback to 30% margin if ingredient prices not available
         gross = sum(order_total_receivable(o) for o in orders)
         return gross * 0.30, gross * 0.30
 
     total_cost = 0
+    profit_cost = 0   # cost of effectively sold items only (for profit calc)
     goods_revenue = 0
 
     for order in orders:
         variety = order.variety
         variety_name = variety.name if variety else 'Classic Brownie'
 
-        # Cost includes returns (produced quantity); revenue uses effective quantity.
+        effective_quantity = _effective_order_quantity(order)
         produced_quantity = _produced_order_quantity(order)
 
         breakdown = get_cost_breakdown(variety_name)
@@ -1039,19 +1030,18 @@ def calculate_total_cost_and_profit(orders):
             continue
 
         if (variety and variety.is_combo_pack()) or is_cookie(variety_name):
-            # Cost is the recipe's per-unit cost times the produced quantity
-            total_cost += cost_per_brownie * produced_quantity
+            total_cost  += cost_per_brownie * produced_quantity
+            profit_cost += cost_per_brownie * effective_quantity
             goods_revenue += order_goods_revenue(order)
         else:
             order_price = float(order.price)
-
             brownies_per_unit = calculate_brownies_from_price(order_price, variety_name)
-            brownies_count = brownies_per_unit * float(produced_quantity)
-            total_cost += brownies_count * cost_per_brownie
+            total_cost  += brownies_per_unit * float(produced_quantity)  * cost_per_brownie
+            profit_cost += brownies_per_unit * float(effective_quantity) * cost_per_brownie
             goods_revenue += order_goods_revenue(order)
 
     total_courier = sum(_order_courier_float(o) for o in orders)
-    profit = goods_revenue - total_cost - total_courier
+    profit = goods_revenue - profit_cost - total_courier
     return profit, total_cost
 
 
@@ -1066,7 +1056,8 @@ def aggregate_variety_cost_breakdown_from_orders(orders):
             variety_cost_breakdown[variety_name] = {
                 'sales': 0,
                 'courier': 0,
-                'cost': 0,
+                'cost': 0,          # full produced-qty cost (includes returns)
+                'effective_cost': 0, # cost of sold items only (for profit calc)
                 'quantity': 0,
                 'brownies_count': 0,
             }
@@ -1079,16 +1070,18 @@ def aggregate_variety_cost_breakdown_from_orders(orders):
 
         effective_quantity = _effective_order_quantity(order)
         order_quantity = float(effective_quantity)
-        # Cost includes returns (produced quantity); sales/units shown use effective qty.
+        # Full produced quantity used for cost display; effective qty for sales/units.
         produced_quantity = _produced_order_quantity(order)
 
         if variety and variety.is_combo_pack():
             order_cost = cost_per_brownie * produced_quantity
+            effective_order_cost = cost_per_brownie * effective_quantity
             g_rev = order_goods_revenue(order)
             brownies_per_combo = get_brownies_in_combo_pack(variety)
             brownies_count = brownies_per_combo * effective_quantity
         elif is_cookie(variety_name):
             order_cost = cost_per_brownie * produced_quantity
+            effective_order_cost = cost_per_brownie * effective_quantity
             g_rev = order_goods_revenue(order)
             brownies_count = effective_quantity
         else:
@@ -1096,11 +1089,13 @@ def aggregate_variety_cost_breakdown_from_orders(orders):
             brownies_per_unit = calculate_brownies_from_price(order_price, variety_name)
             brownies_count = brownies_per_unit * order_quantity
             order_cost = brownies_per_unit * float(produced_quantity) * cost_per_brownie
+            effective_order_cost = brownies_per_unit * float(effective_quantity) * cost_per_brownie
             g_rev = order_goods_revenue(order)
 
         variety_cost_breakdown[variety_name]['sales'] += g_rev
         variety_cost_breakdown[variety_name]['courier'] += _order_courier_float(order)
         variety_cost_breakdown[variety_name]['cost'] += order_cost
+        variety_cost_breakdown[variety_name]['effective_cost'] += effective_order_cost
         variety_cost_breakdown[variety_name]['quantity'] += order_quantity
         variety_cost_breakdown[variety_name]['brownies_count'] += brownies_count
 
@@ -1114,7 +1109,7 @@ def format_variety_breakdown_rows(variety_cost_breakdown):
         g_sales = data['sales']
         courier = float(data.get('courier') or 0)
         revenue = g_sales + courier
-        profit = g_sales - data['cost'] - courier
+        profit = g_sales - data.get('effective_cost', data['cost']) - courier
         profit_pct = (profit / revenue * 100) if revenue > 0 else 0
         variety_obj = Variety.query.filter_by(name=variety_name).first()
         if (variety_obj and variety_obj.is_combo_pack()) or is_cookie(variety_name):
@@ -1143,11 +1138,43 @@ def index():
     varieties = Variety.query.order_by(Variety.name).all()
     shops = Shop.query.order_by(Shop.name).all()
     variety_list_prices = variety_list_prices_map(varieties)
+
+    # Build a JSON-safe list of templates for the "apply from template" UI
+    variety_name_by_id = {v.id: v.name for v in varieties}
+    templates_for_ui = []
+    if USE_GOOGLE_SHEETS:
+        try:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            for t in gs.get_templates():
+                items = []
+                for item in t.get('items', []):
+                    try:
+                        vid = int(item.get('id') if 'id' in item else item.get('variety_id'))
+                    except (ValueError, TypeError):
+                        continue
+                    qty = int(item.get('quantity', 1) or 1)
+                    amount = float(item.get('amount', 0) or 0)
+                    items.append({
+                        'variety_name': variety_name_by_id.get(vid, f'Variety #{vid}'),
+                        'quantity': qty,
+                        'amount': amount,
+                    })
+                templates_for_ui.append({
+                    'id': t['id'],
+                    'shop_id': t.get('shop_id'),
+                    'name': t.get('name', ''),
+                    'items': items,
+                })
+        except Exception:
+            pass  # Templates unavailable – page still works without them
+
     return render_template(
         'index.html',
         varieties=varieties,
         shops=shops,
         variety_list_prices=variety_list_prices,
+        templates_for_ui=templates_for_ui,
     )
 
 
@@ -1167,12 +1194,12 @@ def add_order():
         is_sample = request.form.get('is_sample', type=str) == 'true'
         
         # Validation
-        if not variety_id or not shop_id or not quantity or not price or not delivery_date_str:
+        if not variety_id or not shop_id or not quantity or price is None or not delivery_date_str:
             flash('All fields are required', 'error')
             return redirect(url_for('index'))
         
-        if quantity <= 0 or price <= 0:
-            flash('Quantity and price must be positive numbers', 'error')
+        if quantity <= 0 or price < 0:
+            flash('Quantity must be positive; price must be 0 or more', 'error')
             return redirect(url_for('index'))
         
         if returns < 0 or returns > quantity:
@@ -1309,27 +1336,14 @@ def add_variety():
                 if quantity and quantity > 0:
                     combo_items.append({"id": var.id, "quantity": quantity})
         
-        # Get extra packing cost from form (default to 5.0)
-        extra_packing_cost = request.form.get('extra_packing_cost', type=float) or 5.0
-        
-        # Set combo_pack_config to empty string if no items, or JSON object with items and cost
+        # Set combo_pack_config to empty string if no items, or JSON object with items
         if combo_items:
             combo_pack_config = json.dumps({
                 "items": combo_items,
-                "extra_packing_cost": extra_packing_cost
+                "extra_packing_cost": 5.0
             })
-            proxy = Variety(
-                name=name,
-                default_price=Decimal('0'),
-                combo_pack_config=combo_pack_config,
-            )
-            default_price = get_variety_list_price(proxy)
         else:
             combo_pack_config = ''  # Empty string for regular variety
-        
-        if default_price is None or default_price <= 0:
-            flash('Default price must be a positive number', 'error')
-            return redirect(url_for('varieties'))
         
         if USE_GOOGLE_SHEETS:
             from google_sheets import get_gs_db
@@ -1386,28 +1400,17 @@ def update_variety(id):
                 if quantity and quantity > 0:
                     combo_items.append({"id": var.id, "quantity": quantity})
         
-        # Get extra packing cost from form (default to 5.0)
-        extra_packing_cost = request.form.get('extra_packing_cost', type=float) or 5.0
-        
-        # Set combo_pack_config to empty string if no items, or JSON object with items and cost
+        # Preserve existing packing cost from config, or default to 5.0
+        existing_packing_cost = variety.get_extra_packing_cost() if combo_items else 5.0
+
+        # Set combo_pack_config to empty string if no items, or JSON object with items
         if combo_items:
             combo_pack_config = json.dumps({
                 "items": combo_items,
-                "extra_packing_cost": extra_packing_cost
+                "extra_packing_cost": existing_packing_cost
             })
-            proxy = Variety(
-                id=variety.id,
-                name=name,
-                default_price=variety.default_price,
-                combo_pack_config=combo_pack_config,
-            )
-            default_price = get_variety_list_price(proxy)
         else:
             combo_pack_config = ''  # Empty string to clear combo pack config
-        
-        if default_price is None or default_price <= 0:
-            flash('Default price must be a positive number', 'error')
-            return redirect(url_for('varieties'))
         
         if USE_GOOGLE_SHEETS:
             # For Google Sheets, update via API
@@ -2646,12 +2649,12 @@ def edit_order(id):
             is_sample = request.form.get('is_sample', type=str) == 'true'
             
             # Validation
-            if not variety_id or not shop_id or not quantity or not price or not delivery_date_str:
+            if not variety_id or not shop_id or not quantity or price is None or not delivery_date_str:
                 flash('All fields are required', 'error')
                 return redirect(url_for('edit_order', id=id))
             
-            if quantity <= 0 or price <= 0:
-                flash('Quantity and price must be positive numbers', 'error')
+            if quantity <= 0 or price < 0:
+                flash('Quantity must be positive; price must be 0 or more', 'error')
                 return redirect(url_for('edit_order', id=id))
             
             if returns < 0 or returns > quantity:
@@ -2934,6 +2937,36 @@ def record_shop_payment(shop_id):
             db_session.rollback()
         flash(f'Error recording payment: {str(e)}', 'error')
         return redirect(url_for('orders', shop_id=shop_id))
+
+
+@app.route('/orders/delete/<int:id>', methods=['POST'])
+def delete_order(id):
+    """Delete a single order"""
+    try:
+        order = Order.query.get_or_404(id)
+        shop_id = request.form.get('shop_id', type=int)
+        pending_only = request.form.get('pending_only') == 'true'
+
+        if USE_GOOGLE_SHEETS:
+            from google_sheets import get_gs_db
+            gs = get_gs_db()
+            gs.delete_order(id)
+        else:
+            db_session.delete(order)
+            db_session.commit()
+
+        flash('Order deleted successfully', 'success')
+    except Exception as e:
+        if not USE_GOOGLE_SHEETS:
+            db_session.rollback()
+        flash(f'Error deleting order: {str(e)}', 'error')
+
+    params = {}
+    if shop_id:
+        params['shop_id'] = shop_id
+    if pending_only:
+        params['pending_only'] = 'true'
+    return redirect(url_for('orders', **params))
 
 
 @app.route('/orders/delete-all', methods=['POST'])
